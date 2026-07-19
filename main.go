@@ -160,22 +160,28 @@ func main() {
 			return nil
 		},
 	}
-	// TLS is best-effort: reuse the node's kubelet certs when present, else serve
-	// the (stubbed) kubelet API over plain HTTP. A missing cert must not crash the
-	// node — heterogeneous hosts may not carry vk-cocoon's cert.
+	// virtual-kubelet only serves the kubelet API over TLS. Reuse the node's
+	// kubelet cert when present, else self-sign one so every node's API surface is
+	// uniform regardless of what the co-located vk-cocoon carries.
+	var cert tls.Certificate
 	if *tlsCert != "" && *tlsKey != "" && fileReadable(*tlsCert) && fileReadable(*tlsKey) {
-		cert, certErr := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
-		if certErr != nil {
-			logger.Error(certErr, "load kubelet TLS cert")
+		cert, err = tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+		if err != nil {
+			logger.Error(err, "load kubelet TLS cert")
 			os.Exit(1)
 		}
-		opts = append(opts, func(c *nodeutil.NodeConfig) error {
-			c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
-			return nil
-		})
-	} else if *tlsCert != "" || *tlsKey != "" {
-		logger.Info("kubelet TLS cert/key absent; serving kubelet API over plain HTTP", "cert", *tlsCert)
+	} else {
+		logger.Info("kubelet cert absent; self-signing", "node", *nodeName)
+		cert, err = selfSignedCert(*nodeName, *nodeIP, "127.0.0.1")
+		if err != nil {
+			logger.Error(err, "self-sign kubelet cert")
+			os.Exit(1)
+		}
 	}
+	opts = append(opts, func(c *nodeutil.NodeConfig) error {
+		c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
+		return nil
+	})
 
 	n, err := nodeutil.NewNode(*nodeName, newProvider, opts...)
 	if err != nil {
