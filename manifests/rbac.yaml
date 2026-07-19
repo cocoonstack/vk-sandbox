@@ -1,0 +1,56 @@
+# RBAC for vk-cocoon-sandbox: the virtual-kubelet node itself plus the
+# destroy-authorization read (get sandboxes.agents.x-k8s.io) and, when
+# --publish-inventory is on, server-side-apply of NodeInventory objects.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vk-cocoon-sandbox
+  namespace: cocoon-sandbox-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: vk-cocoon-sandbox
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["create", "get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes/status"]
+    verbs: ["update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["update", "patch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "update", "patch"]
+  # Destroy authorization: quorum-read the owning Sandbox CR before any release.
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get"]
+  # L3 inventory publishing (--publish-inventory).
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["nodeinventories"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: vk-cocoon-sandbox
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: vk-cocoon-sandbox
+subjects:
+  - kind: ServiceAccount
+    name: vk-cocoon-sandbox
+    namespace: cocoon-sandbox-system
