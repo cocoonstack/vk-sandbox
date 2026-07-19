@@ -23,9 +23,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -55,7 +58,11 @@ const TaintKey = "virtual-kubelet.io/provider"
 
 func main() {
 	var (
-		nodeName         = flag.String("node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name")
+		nodeName         = flag.String("node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name (must be distinct from a co-located vk-cocoon node)")
+		nodeIP           = flag.String("node-ip", envOr("VK_NODE_IP", ""), "node InternalIP advertised to the apiserver")
+		listenAddr       = flag.String("listen-addr", envOr("VK_LISTEN_ADDR", ":10260"), "kubelet API listen address (must differ from a co-located vk-cocoon, which uses :10250)")
+		tlsCert          = flag.String("tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; plain HTTP if unset)")
+		tlsKey           = flag.String("tls-key", os.Getenv("VK_TLS_KEY"), "kubelet API TLS key")
 		sandboxdURL      = flag.String("sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
 		tokenFile        = flag.String("sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
 		statePath        = flag.String("state-path", envOr("VK_STATE_PATH", "/var/lib/vk-cocoon-sandbox/claims.json"), "claims table persistence path")
@@ -112,6 +119,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	kubeletPort, err := listenPort(*listenAddr)
+	if err != nil {
+		logger.Error(err, "parse --listen-addr")
+		os.Exit(1)
+	}
+
 	newProvider := func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
 		if cfg.Node != nil {
 			if cfg.Node.Labels == nil {
@@ -126,11 +139,33 @@ func main() {
 				Value:  provider.RuntimeSandboxd,
 				Effect: corev1.TaintEffectNoSchedule,
 			})
+			addrs := []corev1.NodeAddress{{Type: corev1.NodeHostName, Address: *nodeName}}
+			if *nodeIP != "" {
+				addrs = append([]corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: *nodeIP}}, addrs...)
+			}
+			cfg.Node.Status.Addresses = addrs
+			cfg.Node.Status.DaemonEndpoints.KubeletEndpoint.Port = kubeletPort
 		}
 		return p, nil, nil
 	}
 
-	n, err := nodeutil.NewNode(*nodeName, newProvider, nodeutil.WithClient(clientset))
+	opts := []nodeutil.NodeOpt{
+		nodeutil.WithClient(clientset),
+		func(c *nodeutil.NodeConfig) error { c.HTTPListenAddr = *listenAddr; return nil },
+	}
+	if *tlsCert != "" && *tlsKey != "" {
+		cert, certErr := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
+		if certErr != nil {
+			logger.Error(certErr, "load kubelet TLS cert")
+			os.Exit(1)
+		}
+		opts = append(opts, func(c *nodeutil.NodeConfig) error {
+			c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
+			return nil
+		})
+	}
+
+	n, err := nodeutil.NewNode(*nodeName, newProvider, opts...)
 	if err != nil {
 		logger.Error(err, "create virtual-kubelet node")
 		os.Exit(1)
@@ -183,4 +218,17 @@ func kubeConfig() (*rest.Config, error) {
 		return cfg, nil
 	}
 	return clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
+}
+
+// listenPort extracts the numeric port from a listen address (":10260").
+func listenPort(addr string) (int32, error) {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0, err
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0, err
+	}
+	return int32(port), nil
 }
