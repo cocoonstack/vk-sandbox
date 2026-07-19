@@ -26,6 +26,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -149,9 +150,15 @@ func main() {
 		return p, nil, nil
 	}
 
+	kubeletMux := http.NewServeMux()
 	opts := []nodeutil.NodeOpt{
 		nodeutil.WithClient(clientset),
-		func(c *nodeutil.NodeConfig) error { c.HTTPListenAddr = *listenAddr; return nil },
+		nodeutil.AttachProviderRoutes(kubeletMux),
+		func(c *nodeutil.NodeConfig) error {
+			c.HTTPListenAddr = *listenAddr
+			c.Handler = kubeletMux
+			return nil
+		},
 	}
 	if *tlsCert != "" && *tlsKey != "" {
 		cert, certErr := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
