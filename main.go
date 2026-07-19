@@ -160,7 +160,10 @@ func main() {
 			return nil
 		},
 	}
-	if *tlsCert != "" && *tlsKey != "" {
+	// TLS is best-effort: reuse the node's kubelet certs when present, else serve
+	// the (stubbed) kubelet API over plain HTTP. A missing cert must not crash the
+	// node — heterogeneous hosts may not carry vk-cocoon's cert.
+	if *tlsCert != "" && *tlsKey != "" && fileReadable(*tlsCert) && fileReadable(*tlsKey) {
 		cert, certErr := tls.LoadX509KeyPair(*tlsCert, *tlsKey)
 		if certErr != nil {
 			logger.Error(certErr, "load kubelet TLS cert")
@@ -170,6 +173,8 @@ func main() {
 			c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
 			return nil
 		})
+	} else if *tlsCert != "" || *tlsKey != "" {
+		logger.Info("kubelet TLS cert/key absent; serving kubelet API over plain HTTP", "cert", *tlsCert)
 	}
 
 	n, err := nodeutil.NewNode(*nodeName, newProvider, opts...)
@@ -225,6 +230,12 @@ func kubeConfig() (*rest.Config, error) {
 		return cfg, nil
 	}
 	return clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
+}
+
+// fileReadable reports whether path exists and is a regular readable file.
+func fileReadable(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // listenPort extracts the numeric port from a listen address (":10260").
