@@ -35,6 +35,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -64,6 +65,9 @@ func main() {
 		listenAddr       = flag.String("listen-addr", envOr("VK_LISTEN_ADDR", ":10260"), "kubelet API listen address (must differ from a co-located vk-cocoon, which uses :10250)")
 		tlsCert          = flag.String("tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; plain HTTP if unset)")
 		tlsKey           = flag.String("tls-key", os.Getenv("VK_TLS_KEY"), "kubelet API TLS key")
+		nodeCPU          = flag.String("node-cpu", envOr("VK_NODE_CPU", "4000"), "advertised node CPU capacity (a scheduling budget; the real resource is sandboxd's)")
+		nodeMem          = flag.String("node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
+		nodePods         = flag.String("node-pods", envOr("VK_NODE_PODS", "2000"), "advertised node max pods")
 		sandboxdURL      = flag.String("sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
 		tokenFile        = flag.String("sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
 		statePath        = flag.String("state-path", envOr("VK_STATE_PATH", "/var/lib/vk-cocoon-sandbox/claims.json"), "claims table persistence path")
@@ -126,6 +130,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Advertised capacity is a scheduling budget only — the pod is a placeholder
+	// and sandboxd holds the real microVM. Without it the scheduler sees 0
+	// allocatable and rejects every sandbox pod.
+	capacity := corev1.ResourceList{
+		corev1.ResourceCPU:    resource.MustParse(*nodeCPU),
+		corev1.ResourceMemory: resource.MustParse(*nodeMem),
+		corev1.ResourcePods:   resource.MustParse(*nodePods),
+	}
+
 	newProvider := func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
 		if cfg.Node != nil {
 			if cfg.Node.Labels == nil {
@@ -146,6 +159,8 @@ func main() {
 			}
 			cfg.Node.Status.Addresses = addrs
 			cfg.Node.Status.DaemonEndpoints.KubeletEndpoint.Port = kubeletPort
+			cfg.Node.Status.Capacity = capacity
+			cfg.Node.Status.Allocatable = capacity
 		}
 		return p, nil, nil
 	}
