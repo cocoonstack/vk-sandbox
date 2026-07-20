@@ -32,7 +32,7 @@ func TestListSandboxes(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"sandboxes":[{"id":"sb_1"},{"id":"sb_2","hibernated":true}]}`))
+		_, _ = w.Write([]byte(`{"sandboxes":[{"id":"sb_1","claim_ref":"ns/w1"},{"id":"sb_2","hibernated":true}]}`))
 	}))
 	defer srv.Close()
 
@@ -43,6 +43,10 @@ func TestListSandboxes(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].ID != "sb_1" || !got[1].Hibernated {
 		t.Fatalf("unexpected rows: %+v", got)
+	}
+	// The claim_ref sandboxd echoes must decode so the publisher can name the entry.
+	if got[0].ClaimRef != "ns/w1" {
+		t.Fatalf("claim_ref not decoded: got %q, want %q", got[0].ClaimRef, "ns/w1")
 	}
 }
 

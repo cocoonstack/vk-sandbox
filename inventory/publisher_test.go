@@ -36,41 +36,56 @@ func (s staticLister) ListSandboxes(context.Context) ([]provider.ListedSandbox, 
 	return s, nil
 }
 
-// TestLiveSandboxes maps pod-bound claims into inventory entries with the
-// node-observed phase, and drops claims whose VM is gone from the sandboxd index
-// (computed phase "Gone") so only live sandboxes are published. Unbound
-// (pool-warm) sandboxes are omitted.
+// TestLiveSandboxes publishes the node's sandboxd operator index as inventory
+// entries: each listed sandbox is named by its claim ref (falling back to the
+// sandboxd id when it has none), the phase maps from the hibernated bit, and the
+// address is stamped from this provider's own claim when it tracks the sandbox.
+// Apiserver-direct claims — listed by sandboxd but absent from this provider's
+// claims table — must still be published, named by their claim ref.
 func TestLiveSandboxes(t *testing.T) {
+	// This provider tracks pod-a (with its address) and pod-b; the apiserver-
+	// direct claim and the ref-less claim are absent from its claims table.
 	claims := staticClaims{
 		"ns1/pod-a": {ID: "sb_a", Address: "10.0.0.5:7777"},
 		"ns1/pod-b": {ID: "sb_b"},
-		"ns1/pod-c": {ID: "sb_gone"}, // claim whose VM left the index → Gone
 	}
+	// The node's sandboxd index — the authoritative set of claims on this node.
 	lister := staticLister{
-		{ID: "sb_a"},
-		{ID: "sb_b", Hibernated: true},
-		{ID: "sb_warm_unbound"},
+		{ID: "sb_a", ClaimRef: "ns1/pod-a"},
+		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
+		{ID: "sb_direct", ClaimRef: "ns2/direct-c"}, // apiserver-direct: not in claims
+		{ID: "sb_noref"}, // no claim ref: falls back to the id
 	}
 	src := NewLiveSource(claims, lister)
 	got, err := src.LiveSandboxes(context.Background())
 	if err != nil {
 		t.Fatalf("LiveSandboxes: %v", err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("want 2 live entries (Gone filtered, unbound omitted), got %d: %+v", len(got), got)
+	if len(got) != 4 {
+		t.Fatalf("want 4 entries (every listed sandbox published), got %d: %+v", len(got), got)
 	}
-	byName := map[string]string{}
+	byName := map[string]scale.InventoryEntry{}
 	for _, e := range got {
-		byName[e.Name] = e.Phase
+		byName[e.Name] = e
 		if e.ClaimRef != e.Name {
 			t.Errorf("entry %s: claimRef %q != name", e.Name, e.ClaimRef)
 		}
 	}
-	if byName["ns1/pod-a"] != "Running" || byName["ns1/pod-b"] != "Hibernated" {
-		t.Fatalf("phase mapping wrong: %v", byName)
+	// Named by claim ref, phase mapped, address stamped from the provider's claim.
+	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" {
+		t.Errorf("ns1/pod-a: got phase=%q addr=%q, want Running / 10.0.0.5:7777", e.Phase, e.Address)
 	}
-	if _, ok := byName["ns1/pod-c"]; ok {
-		t.Fatalf("Gone claim ns1/pod-c must not be published: %v", byName)
+	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" {
+		t.Errorf("ns1/pod-b: got phase=%q addr=%q, want Hibernated / no address", e.Phase, e.Address)
+	}
+	// Apiserver-direct claim: published under its claim ref though this provider
+	// never claimed it (so no address is available here).
+	if e, ok := byName["ns2/direct-c"]; !ok || e.Phase != "Running" || e.Address != "" {
+		t.Errorf("apiserver-direct claim ns2/direct-c must be published: %+v (ok=%v)", e, ok)
+	}
+	// A sandbox sandboxd listed with no claim ref falls back to the sandboxd id.
+	if e, ok := byName["sb_noref"]; !ok || e.Phase != "Running" {
+		t.Errorf("ref-less claim must fall back to the id: %+v (ok=%v)", e, ok)
 	}
 }
 

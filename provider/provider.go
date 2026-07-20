@@ -62,6 +62,9 @@ type ListedSandbox struct {
 	ID         string `json:"id"`
 	Deadline   string `json:"deadline,omitempty"`
 	Hibernated bool   `json:"hibernated,omitempty"`
+	// ClaimRef is the k8s "<namespace>/<name>" the sandbox was claimed under
+	// (echoed by sandboxd from the claim). Empty for claims made without one.
+	ClaimRef string `json:"claim_ref,omitempty"`
 }
 
 // Claim is the durable record binding one pod key to one sandboxd claim. The

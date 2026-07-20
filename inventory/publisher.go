@@ -55,52 +55,53 @@ func NewLiveSource(claims ClaimSnapshotter, lister provider.Lister) *LiveSource 
 
 var _ scale.NodeLiveSource = (*LiveSource)(nil)
 
-// LiveSandboxes summarizes the node's live sandboxes as inventory entries. A
-// sandbox bound to a pod carries that pod as its name and claim reference; an
-// unbound (pool-warm or orphan-candidate) sandbox is deliberately omitted —
-// inventory serves the aggregated sandboxes view, which is pod-scoped.
+// LiveSandboxes summarizes the node's live sandboxes as inventory entries,
+// read from the node's sandboxd operator index (GET /v1/sandboxes) — the
+// authoritative set of claims this node holds, including claims the aggregated
+// apiserver made directly against sandboxd without ever touching this provider's
+// claims table. Each listed sandbox is named by its claim ref (the k8s
+// "<namespace>/<name>" sandboxd echoes back) so the aggregated read path
+// resolves it by name; a sandbox with no claim ref falls back to its sandboxd id
+// so nothing is dropped.
 //
-// A claim whose VM is no longer in the node's sandboxd index (computed phase
-// "Gone") is a stale record; it is skipped so the aggregated view publishes only
-// live (Running/Hibernated) sandboxes and never surfaces dead entries.
+// The address, when known, comes from this provider's own claim record (an
+// apiserver-direct claim has none here and publishes without one — the node's
+// advertise address still routes it). Reading the live index means only
+// sandboxes sandboxd still holds are published: a claim whose VM is gone is not
+// listed, so the aggregated view never surfaces dead entries.
 func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry, error) {
 	listed, err := s.lister.ListSandboxes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	live := make(map[string]provider.ListedSandbox, len(listed))
+
+	// This provider's own claims carry the sandbox address; index it by sandboxd
+	// id so a listed sandbox this node also tracks gets its address stamped.
+	addrByID := make(map[string]string)
+	for _, c := range s.claims.SnapshotClaims() {
+		if c.Address != "" {
+			addrByID[c.ID] = c.Address
+		}
+	}
+
+	out := make([]scale.InventoryEntry, 0, len(listed))
 	for _, row := range listed {
-		live[row.ID] = row
-	}
-
-	claims := s.claims.SnapshotClaims()
-	keys := make([]string, 0, len(claims))
-	for k := range claims {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	out := make([]scale.InventoryEntry, 0, len(keys))
-	for _, key := range keys {
-		c := claims[key]
-		row, alive := live[c.ID]
-		if !alive {
-			// The claim's VM is gone from the node's sandboxd index: a stale
-			// (Gone) claim. Publish only live sandboxes so the aggregated
-			// apiserver never shows dead entries.
-			continue
+		name := row.ClaimRef
+		if name == "" {
+			name = row.ID // pre-claim-ref claim: fall back to the id so it still shows
 		}
 		phase := "Running"
 		if row.Hibernated {
 			phase = "Hibernated"
 		}
 		out = append(out, scale.InventoryEntry{
-			Name:     key, // "<namespace>/<name>", the store's expected shape
+			Name:     name,
 			Phase:    phase,
-			ClaimRef: key,
-			Address:  c.Address,
+			ClaimRef: name,
+			Address:  addrByID[row.ID],
 		})
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
