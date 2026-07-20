@@ -27,6 +27,7 @@ import (
 	"flag"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -69,6 +70,7 @@ func main() {
 		nodeMem          = flag.String("node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
 		nodePods         = flag.String("node-pods", envOr("VK_NODE_PODS", "2000"), "advertised node max pods")
 		sandboxdURL      = flag.String("sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
+		sandboxdAddr     = flag.String("sandboxd-advertise-addr", envOr("SANDBOXD_ADVERTISE_ADDR", ""), "sandboxd advertise address (host:port) published in NodeInventory for claim routing; defaults to the host:port of --sandboxd-url")
 		tokenFile        = flag.String("sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
 		statePath        = flag.String("state-path", envOr("VK_STATE_PATH", "/var/lib/vk-cocoon-sandbox/claims.json"), "claims table persistence path")
 		orphanInterval   = flag.Duration("orphan-scan-interval", 60*time.Second, "audit-only orphan scan cadence (0 disables)")
@@ -214,8 +216,13 @@ func main() {
 			logger.Error(cerr, "controller-runtime client for inventory publish")
 			os.Exit(1)
 		}
+		advertiseAddr := *sandboxdAddr
+		if advertiseAddr == "" {
+			advertiseAddr = hostPort(*sandboxdURL)
+		}
 		src := inventory.NewLiveSource(p, lister)
-		pub := scale.NewNodeInventoryPublisher(*nodeName, src,
+		infoSrc := inventory.NewNodeInfoSource(advertiseAddr, lister)
+		pub := inventory.NewPublisher(*nodeName, src, infoSrc,
 			scale.NewSSAInventoryApplier(cclient, "vk-cocoon-sandbox"), logger.WithName("inventory"))
 		go pub.PublishPeriodically(ctx, *publishInterval)
 	}
@@ -257,6 +264,16 @@ func kubeConfig() (*rest.Config, error) {
 func fileReadable(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
+}
+
+// hostPort returns the "host:port" of a sandboxd base URL with the scheme
+// stripped, the form NodeInventory publishes as the node's claim-routing advertise
+// address. A bare "host:port" (no scheme) is returned unchanged.
+func hostPort(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return strings.TrimRight(raw, "/")
 }
 
 // listenPort extracts the numeric port from a listen address (":10260").

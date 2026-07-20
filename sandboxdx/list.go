@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package sandboxdx extends the cocoon-sandbox-operator sandboxd client with
-// the root-token operator index read (GET /v1/sandboxes) this provider needs
-// for status, the audit-only orphan scan, and NodeInventory publishing. Claim
-// and Release stay on the operator's client so the wire contract has exactly
-// one home.
+// Package sandboxdx extends the cocoon-sandbox-operator sandboxd client with the
+// root-token operator surfaces this provider needs: the live index (GET
+// /v1/sandboxes) for status and the audit-only orphan scan, and warm-pool
+// capacity (GET /v1/info) for NodeInventory publishing. Claim and Release stay on
+// the operator's client so the wire contract has exactly one home.
 package sandboxdx
 
 import (
