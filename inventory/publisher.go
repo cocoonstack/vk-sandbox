@@ -95,7 +95,11 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 			phase = "Hibernated"
 		}
 		out = append(out, scale.InventoryEntry{
-			Name:     name,
+			Name: name,
+			// ID is sandboxd's own "sb_..." claim id — the handle the node's
+			// release verb needs. The aggregated apiserver surfaces it so a
+			// kubectl delete releases exactly this microVM (never by k8s name).
+			ID:       row.ID,
 			Phase:    phase,
 			ClaimRef: name,
 			Address:  addrByID[row.ID],

@@ -38,10 +38,11 @@ func (s staticLister) ListSandboxes(context.Context) ([]provider.ListedSandbox, 
 
 // TestLiveSandboxes publishes the node's sandboxd operator index as inventory
 // entries: each listed sandbox is named by its claim ref (falling back to the
-// sandboxd id when it has none), the phase maps from the hibernated bit, and the
-// address is stamped from this provider's own claim when it tracks the sandbox.
-// Apiserver-direct claims — listed by sandboxd but absent from this provider's
-// claims table — must still be published, named by their claim ref.
+// sandboxd id when it has none), carries the sandboxd "sb_..." id (the release
+// handle), maps phase from the hibernated bit, and is stamped with the address
+// from this provider's own claim when it tracks the sandbox. Apiserver-direct
+// claims — listed by sandboxd but absent from this provider's claims table —
+// must still be published, named by their claim ref and carrying their id.
 func TestLiveSandboxes(t *testing.T) {
 	// This provider tracks pod-a (with its address) and pod-b; the apiserver-
 	// direct claim and the ref-less claim are absent from its claims table.
@@ -71,20 +72,21 @@ func TestLiveSandboxes(t *testing.T) {
 			t.Errorf("entry %s: claimRef %q != name", e.Name, e.ClaimRef)
 		}
 	}
-	// Named by claim ref, phase mapped, address stamped from the provider's claim.
-	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" {
-		t.Errorf("ns1/pod-a: got phase=%q addr=%q, want Running / 10.0.0.5:7777", e.Phase, e.Address)
+	// Named by claim ref, id carried, phase mapped, address stamped from the provider's claim.
+	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" {
+		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q, want Running / 10.0.0.5:7777 / sb_a", e.Phase, e.Address, e.ID)
 	}
-	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" {
-		t.Errorf("ns1/pod-b: got phase=%q addr=%q, want Hibernated / no address", e.Phase, e.Address)
+	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" {
+		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q, want Hibernated / no address / sb_b", e.Phase, e.Address, e.ID)
 	}
 	// Apiserver-direct claim: published under its claim ref though this provider
-	// never claimed it (so no address is available here).
-	if e, ok := byName["ns2/direct-c"]; !ok || e.Phase != "Running" || e.Address != "" {
-		t.Errorf("apiserver-direct claim ns2/direct-c must be published: %+v (ok=%v)", e, ok)
+	// never claimed it (so no address is available here), still carrying its id.
+	if e, ok := byName["ns2/direct-c"]; !ok || e.Phase != "Running" || e.Address != "" || e.ID != "sb_direct" {
+		t.Errorf("apiserver-direct claim ns2/direct-c must be published with its id: %+v (ok=%v)", e, ok)
 	}
-	// A sandbox sandboxd listed with no claim ref falls back to the sandboxd id.
-	if e, ok := byName["sb_noref"]; !ok || e.Phase != "Running" {
+	// A sandbox sandboxd listed with no claim ref falls back to the sandboxd id
+	// for its name, and carries that id as the release handle too.
+	if e, ok := byName["sb_noref"]; !ok || e.Phase != "Running" || e.ID != "sb_noref" {
 		t.Errorf("ref-less claim must fall back to the id: %+v (ok=%v)", e, ok)
 	}
 }
