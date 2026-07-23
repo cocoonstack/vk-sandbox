@@ -97,6 +97,14 @@ make all        # fmt-check vet test build
 make race lint
 ```
 
+## Community
+
+- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md)
+- Governance: [GOVERNANCE.md](GOVERNANCE.md) · [MAINTAINERS.md](MAINTAINERS.md)
+- Security reports: [SECURITY.md](SECURITY.md)
+- Direction: [ROADMAP.md](ROADMAP.md)
+- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
 ## License
 
 Apache 2.0 — see [LICENSE](LICENSE).
