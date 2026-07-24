@@ -1,6 +1,6 @@
 module github.com/cocoonstack/vk-cocoon-sandbox
 
-go 1.26.0
+go 1.26.5
 
 require (
 	github.com/cocoonstack/cocoon-sandbox-operator v0.0.0-20260719080211-898a199e301c
