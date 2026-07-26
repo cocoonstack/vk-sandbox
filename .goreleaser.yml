@@ -1,0 +1,91 @@
+version: 2
+
+before:
+  hooks:
+    - go mod download
+
+builds:
+  - id: vk-sandbox-debug
+    binary: vk-sandbox.dbg
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -X github.com/cocoonstack/vk-sandbox/version.REVISION={{.Commit}}
+      - -X github.com/cocoonstack/vk-sandbox/version.VERSION={{.Env.VERSION}}
+      - -X github.com/cocoonstack/vk-sandbox/version.BUILTAT={{.Date}}
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: .
+
+  - id: vk-sandbox-linux
+    binary: vk-sandbox
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s
+      - -X github.com/cocoonstack/vk-sandbox/version.REVISION={{.Commit}}
+      - -X github.com/cocoonstack/vk-sandbox/version.VERSION={{.Env.VERSION}}
+      - -X github.com/cocoonstack/vk-sandbox/version.BUILTAT={{.Date}}
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    main: .
+
+archives:
+  - id: release
+    ids:
+      - vk-sandbox-linux
+    files:
+      - packaging/vk-sandbox.service
+      - packaging/env.example
+    name_template: >-
+      {{- .ProjectName }}_{{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end -}}
+
+  - id: debug
+    ids:
+      - vk-sandbox-debug
+    name_template: >-
+      {{- .ProjectName }}_{{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}_debug
+      {{- if .Arm }}v{{ .Arm }}{{ end -}}
+
+  # Unversioned alias so releases/latest/download/vk-sandbox_Linux_x86_64.tar.gz resolves.
+  - id: release-latest
+    ids:
+      - vk-sandbox-linux
+    files:
+      - packaging/vk-sandbox.service
+      - packaging/env.example
+    name_template: >-
+      {{- .ProjectName }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+      {{- if .Arm }}v{{ .Arm }}{{ end -}}
+
+checksum:
+  name_template: 'checksums.txt'
+
+release:
+  prerelease: auto
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'

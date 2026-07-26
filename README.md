@@ -2,13 +2,17 @@
 
 A [virtual-kubelet](https://github.com/virtual-kubelet/virtual-kubelet) that
 serves Kubernetes **agent-sandbox semantics** (`agents.x-k8s.io`, driven by
-[sandbox-operator](https://github.com/cocoonstack/sandbox-operator))
-from [**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
+[sandbox-operator](https://github.com/cocoonstack/sandbox-operator)) from
+[**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
 hot-sandbox daemon that hands over an already-running microVM in **0.2–0.7 ms**.
 
-Together the three repos are the million-scale design from the operator
-README's *"Scaling design"* chapter — Kubernetes stays the record-of-intent and
-policy plane, the claim transaction runs on the node:
+**Documentation: [cocoonstack.github.io/vk-sandbox](https://cocoonstack.github.io/vk-sandbox/)**
+(source in [`docs/`](docs/)).
+
+## Architecture
+
+Kubernetes stays the record-of-intent and policy plane; the claim transaction
+runs on the node:
 
 ```mermaid
 flowchart LR
@@ -23,10 +27,28 @@ One virtual node fronts one sandboxd. A sandbox Pod scheduled here becomes a
 warm claim; the Pod's IP is the sandbox VM's address; deleting the owner
 `Sandbox` CR — and only that — destroys the VM.
 
+## Quick start
+
+```bash
+vk-sandbox \
+  --node-name vk-sandboxd-node1 \
+  --sandboxd-url http://127.0.0.1:7777 \
+  --sandboxd-token-file /etc/sandboxd/api-token \
+  --state-path /var/lib/vk-sandbox/claims.json \
+  --publish-inventory
+```
+
+`KUBECONFIG` (or in-cluster config) must reach the cluster; see
+[manifests/](manifests/) for a systemd/DaemonSet-style deployment and the RBAC
+the destroy-authorization read needs (get on `sandboxes.agents.x-k8s.io`).
+
+The kubelet exec/logs/port-forward surfaces are intentionally not served —
+interactive access goes through the sandbox SDK and preview URLs.
+
 ## The contracts this provider keeps
 
-These are the load-bearing rules, carried over from the production vk-cocoon
-provider and pinned by intent tests:
+The load-bearing rules, carried over from the production vk-cocoon provider and
+pinned by intent tests:
 
 1. **Pod deletion is not VM authority.** Node-NotReady taint evictions delete
    every pod on a node while the VMs keep serving users. `DeletePod` releases
@@ -49,53 +71,26 @@ provider and pinned by intent tests:
    release token) persists to a 0600 state file; a provider restart keeps the
    authority to tear down exactly what it delivered.
 
-## Pod contract
+The Pod annotation contract, the claim axes, and the `--publish-inventory` L3
+summary are documented in [Configuration](docs/configuration.md) and
+[Architecture](docs/architecture.md).
 
-The operator routes a sandbox pod here with annotations (template/net/size
-keys are shared with the operator's `pkg/scale` L2 gateway):
-
-| Annotation | Meaning |
-|---|---|
-| `sandbox.cocoonstack.io/runtime: sandboxd` | route to this provider |
-| `sandbox.cocoonstack.io/template` | sandboxd template axis (required) |
-| `sandbox.cocoonstack.io/net`, `.../size` | claim axes (sandboxd defaults) |
-| `sandbox.cocoonstack.io/ttl-seconds` | claim lease (0 = server default) |
-| `sandbox.cocoonstack.io/claim-id` | **written back**: the backing claim id |
-
-No warm capacity (sandboxd 429/redirect) fails the create typed — the pod
-stays Pending and the operator's L1 path handles fallback.
-
-## L3 inventory
-
-With `--publish-inventory` the node server-side-applies one O(nodes)
-`NodeInventory` summary (via the operator's `pkg/scale` publisher) so the
-aggregated apiserver can serve `kubectl get sandboxes` with **zero**
-per-sandbox etcd objects.
-
-## Run
-
-```bash
-vk-sandbox \
-  --node-name vk-sandboxd-node1 \
-  --sandboxd-url http://127.0.0.1:7777 \
-  --sandboxd-token-file /etc/sandboxd/api-token \
-  --state-path /var/lib/vk-sandbox/claims.json \
-  --publish-inventory
-```
-
-`KUBECONFIG` (or in-cluster config) must reach the cluster; see
-[manifests/](manifests/) for a systemd/DaemonSet-style deployment and the RBAC
-the destroy-authorization read needs (get on `sandboxes.agents.x-k8s.io`).
-
-The kubelet exec/logs/port-forward surfaces are intentionally not served —
-interactive access goes through the sandbox SDK and preview URLs.
-
-## Develop
+## Development
 
 ```bash
 make all        # fmt-check vet test build
 make race lint
 ```
+
+## Related projects
+
+- [sandbox-operator](https://github.com/cocoonstack/sandbox-operator) — the
+  Kubernetes control plane that routes sandbox Pods to this provider
+- [sandbox](https://github.com/cocoonstack/sandbox) — sandboxd, the node-local
+  hot pool this provider claims from, plus silkd and the SDKs
+- [vk-cocoon](https://github.com/cocoonstack/vk-cocoon) — the sibling provider
+  that runs full Cocoon microVM pods
+- [cocoon](https://github.com/cocoonstack/cocoon) — the microVM engine underneath
 
 ## Community
 
@@ -107,4 +102,4 @@ make race lint
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+AGPL-3.0 — see [LICENSE](LICENSE).

@@ -1,0 +1,50 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths-ignore:
+      - 'docs/**'
+      - 'manifests/**'
+      - 'packaging/**'
+      - '*.md'
+      - 'LICENSE'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: make build
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vk-sandbox-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: vk-sandbox-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 30
