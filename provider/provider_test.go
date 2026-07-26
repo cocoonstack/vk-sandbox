@@ -710,6 +710,39 @@ func TestStartupKeepsTheTableWhenTheNodeCannotBeListed(t *testing.T) {
 	}
 }
 
+func TestCommitWritesOnlyItsOwnTentativeClaim(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two claims in flight; only "ns/a" is being committed.
+	p.mu.Lock()
+	for _, k := range []string{"ns/a", "ns/b"} {
+		p.claims[k] = Claim{ID: "sb_" + k, Token: "t", ClaimedAt: metav1.Now()}
+		p.tentative[k] = struct{}{}
+	}
+	p.mu.Unlock()
+
+	if err := p.commitClaim("ns/a"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st stateFile
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := st.Claims["ns/a"]; !ok {
+		t.Error("the committing claim was not written")
+	}
+	if _, ok := st.Claims["ns/b"]; ok {
+		t.Error("a commit made someone else's tentative claim durable")
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu         sync.Mutex

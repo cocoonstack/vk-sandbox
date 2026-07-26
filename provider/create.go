@@ -85,7 +85,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	// A stranded claim from an earlier failed create still holds a live microVM
 	// and its credential exists nowhere else. Claiming over it would destroy the
 	// only handle to that sandbox, so it is returned first.
-	if err := p.clearStrandedClaim(ctx, key); err != nil {
+	if err := p.clearStrandedClaim(key); err != nil {
 		return err
 	}
 
@@ -136,7 +136,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 // clearStrandedClaim returns a sandbox left behind by an earlier create whose
 // claim never reached disk and whose compensating release failed. Until it is
 // gone this key cannot be reused: its credential lives only in memory.
-func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
+func (p *Provider) clearStrandedClaim(key string) error {
 	p.mu.RLock()
 	c, held := p.claims[key]
 	_, pending := p.tentative[key]
@@ -145,6 +145,10 @@ func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 		return nil
 	}
 
+	// Its own deadline, like the undo path: returning this sandbox must not
+	// depend on a caller context that may already be canceled.
+	ctx, cancel := context.WithTimeout(context.Background(), undoReleaseTimeout)
+	defer cancel()
 	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
 		var he *sandboxd.HTTPError
 		if !errors.As(err, &he) || he.StatusCode != 404 {
