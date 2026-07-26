@@ -105,7 +105,10 @@ created at `0700`, and reloaded on startup. Concurrent Pod creates serialize
 their writes, so the file always reflects the newest table rather than whichever
 snapshot happened to land last. **Treat it as a secret** -- it
 contains release tokens. A missing file is not an error; a malformed one is
-fatal at startup rather than silently discarding live authority.
+fatal at startup rather than silently discarding live authority, and so is a
+path the provider cannot write: starting without durable claims would leak one
+microVM per claim on the next restart, so the virtual node stays out of
+scheduling until the path is fixed.
 
 ## RBAC
 
