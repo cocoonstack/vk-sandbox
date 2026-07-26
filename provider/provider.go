@@ -214,15 +214,27 @@ func (p *Provider) loadState() error {
 	}
 	p.claims = st.Claims
 	if backfilled {
-		p.saveState()
+		// Startup, not the hot path: a migration that cannot be written would
+		// silently re-pick a new timestamp on every restart, so fail loudly.
+		if err := p.persist(); err != nil {
+			return fmt.Errorf("persist claimedAt migration: %w", err)
+		}
 	}
 	return nil
 }
 
-// saveState atomically persists the claims table. Callers hold no lock.
+// saveState persists the claims table, logging rather than returning a failure:
+// the caller has already handed a live sandbox to a Pod and cannot unwind it.
 func (p *Provider) saveState() {
+	if err := p.persist(); err != nil {
+		p.log.Error(err, "persist claims state")
+	}
+}
+
+// persist atomically writes the claims table. Callers hold no lock.
+func (p *Provider) persist() error {
 	if p.statePath == "" {
-		return
+		return nil
 	}
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
@@ -233,21 +245,19 @@ func (p *Provider) saveState() {
 	p.mu.RUnlock()
 	b, err := json.Marshal(st)
 	if err != nil {
-		p.log.Error(err, "encode claims state")
-		return
+		return fmt.Errorf("encode claims state: %w", err)
 	}
 	// Cheap next to the write (2us of a 300us save) and it keeps a deleted
 	// state directory from turning every later save into a permanent failure.
 	if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
-		p.log.Error(err, "mkdir state dir")
-		return
+		return fmt.Errorf("mkdir state dir: %w", err)
 	}
 	tmp := p.statePath + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		p.log.Error(err, "write claims state")
-		return
+		return fmt.Errorf("write claims state: %w", err)
 	}
 	if err := os.Rename(tmp, p.statePath); err != nil {
-		p.log.Error(err, "rename claims state")
+		return fmt.Errorf("rename claims state: %w", err)
 	}
+	return nil
 }

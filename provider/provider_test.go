@@ -492,6 +492,25 @@ func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
 	}
 }
 
+func TestNewFailsWhenTheClaimedAtMigrationCannotBePersisted(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/claims.json"
+	legacy := `{"claims":{"ns/p":{"id":"sb_1","token":"t","podUID":"u"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Readable but not writable: the migration would otherwise stay in memory and
+	// re-pick a new timestamp on every restart, silently.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := New(Config{StatePath: path, Logger: logr.Discard()}); err == nil {
+		t.Fatal("New succeeded even though the claimedAt migration could not be written")
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu       sync.Mutex
