@@ -136,11 +136,13 @@ func (p *Provider) undoUnpersistedClaim(key string, c Claim, persistErr error) e
 			fmt.Errorf("release sandbox %s: %w", c.ID, err),
 		)
 	}
+	// The claim and pod entries were written together, so they are withdrawn
+	// together and only while they are still the ones this call stored.
 	p.mu.Lock()
 	if cur, ok := p.claims[key]; ok && cur.ID == c.ID {
 		delete(p.claims, key)
+		delete(p.pods, key)
 	}
-	delete(p.pods, key)
 	p.mu.Unlock()
 	p.log.Info("returned sandbox after its claim could not be persisted", "pod", key, "claim", c.ID)
 	return fmt.Errorf("persist claim for %s: %w", key, persistErr)
