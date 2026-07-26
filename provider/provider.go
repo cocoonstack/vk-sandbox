@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +29,10 @@ import (
 
 	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
+
+// undoReleaseTimeout bounds the compensating release when a fresh claim cannot
+// be persisted; the caller's context may already be canceled by then.
+const undoReleaseTimeout = 10 * time.Second
 
 // SandboxdClient is the subset of the sandboxd API this provider drives.
 // *sandboxd.Client (from sandbox-operator) satisfies Claim/Release;
@@ -217,8 +222,10 @@ func (p *Provider) loadState() error {
 	return nil
 }
 
-// saveState persists the claims table, logging rather than returning a failure:
-// the caller has already handed a live sandbox to a Pod and cannot unwind it.
+// saveState persists the claims table, logging rather than returning a failure.
+// Its callers are the paths that have already changed what the node holds —
+// adoption of a preserved claim, and release — where there is nothing left to
+// undo. A fresh claim uses persist directly, because that one is still undoable.
 func (p *Provider) saveState() {
 	if err := p.persist(); err != nil {
 		p.log.Error(err, "persist claims state")

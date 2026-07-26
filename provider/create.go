@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -106,10 +107,43 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	p.claims[key] = c
 	p.pods[key] = pod.DeepCopy()
 	p.mu.Unlock()
-	p.saveState()
+
+	// Nothing has told Kubernetes this Pod is running yet, so a claim whose
+	// release credential could not be stored is still undoable — and must be
+	// undone, or the microVM leaks with no way to reach it after a restart.
+	if err := p.persist(); err != nil {
+		return p.undoUnpersistedClaim(key, c, err)
+	}
+
 	p.log.Info("claimed hot sandbox", "pod", key, "claim", c.ID, "addr", c.Address)
 	p.pushRunning(pod, c)
 	return nil
+}
+
+// undoUnpersistedClaim hands a just-claimed sandbox back after its release
+// credential could not be stored. The release runs on its own deadline because
+// the caller's context may already be canceled. A release that also fails keeps
+// the in-memory claim so a later DeletePod can still reach the sandbox.
+func (p *Provider) undoUnpersistedClaim(key string, c Claim, persistErr error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), undoReleaseTimeout)
+	defer cancel()
+
+	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
+		p.log.Error(err, "could not return a sandbox whose claim failed to persist; keeping the credential in memory",
+			"pod", key, "claim", c.ID)
+		return errors.Join(
+			fmt.Errorf("persist claim for %s: %w", key, persistErr),
+			fmt.Errorf("release sandbox %s: %w", c.ID, err),
+		)
+	}
+	p.mu.Lock()
+	if cur, ok := p.claims[key]; ok && cur.ID == c.ID {
+		delete(p.claims, key)
+	}
+	delete(p.pods, key)
+	p.mu.Unlock()
+	p.log.Info("returned sandbox after its claim could not be persisted", "pod", key, "claim", c.ID)
+	return fmt.Errorf("persist claim for %s: %w", key, persistErr)
 }
 
 // UpdatePod records the newest pod object; sandbox pods are immutable at the

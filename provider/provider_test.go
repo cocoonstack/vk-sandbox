@@ -507,14 +507,69 @@ func TestNewFailsWhenTheClaimedAtMigrationCannotBePersisted(t *testing.T) {
 	}
 }
 
+func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
+	dir := t.TempDir()
+	sd := &fakeSandboxd{}
+	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Break persistence after startup, the way a full disk or a read-only
+	// remount would.
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	var pushed bool
+	p.NotifyPods(t.Context(), func(*corev1.Pod) { pushed = true })
+
+	err = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", ""))
+	if err == nil {
+		t.Fatal("CreatePod reported success though the release credential was never stored")
+	}
+	if pushed {
+		t.Error("the Pod was published as Running despite the failure")
+	}
+	if len(sd.releases) != 1 {
+		t.Fatalf("the sandbox was not returned: releases=%v", sd.releases)
+	}
+	if _, ok := p.claimFor("ns/p"); ok {
+		t.Error("a returned sandbox must not stay in the claims table")
+	}
+}
+
+func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
+	dir := t.TempDir()
+	sd := &fakeSandboxd{releaseErr: errors.New("sandboxd unreachable")}
+	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err == nil {
+		t.Fatal("CreatePod reported success")
+	}
+	// The credential is the only way to reach that sandbox; dropping it would
+	// strand the microVM until sandboxd's TTL.
+	if _, ok := p.claimFor("ns/p"); !ok {
+		t.Error("the release credential was discarded even though the sandbox is still claimed")
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
-	mu       sync.Mutex
-	claims   int
-	releases []string
-	listErr  error
-	live     []ListedSandbox
-	claimErr error
+	mu         sync.Mutex
+	claims     int
+	releases   []string
+	listErr    error
+	live       []ListedSandbox
+	claimErr   error
+	releaseErr error
 }
 
 func (f *fakeSandboxd) Claim(_ context.Context, _ sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
@@ -532,6 +587,9 @@ func (f *fakeSandboxd) Claim(_ context.Context, _ sandboxd.ClaimSpec) (sandboxd.
 func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.releaseErr != nil {
+		return f.releaseErr
+	}
 	f.releases = append(f.releases, id)
 	return nil
 }
