@@ -82,6 +82,13 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
+	// A stranded claim from an earlier failed create still holds a live microVM
+	// and its credential exists nowhere else. Claiming over it would destroy the
+	// only handle to that sandbox, so it is returned first.
+	if err := p.clearStrandedClaim(ctx, key); err != nil {
+		return err
+	}
+
 	ttl := 0
 	if s := ann(pod, AnnTTLSeconds, ""); s != "" {
 		v, err := strconv.Atoi(s)
@@ -123,6 +130,35 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 
 	p.log.Info("claimed hot sandbox", "pod", key, "claim", c.ID, "addr", c.Address)
 	p.pushRunning(pod, c)
+	return nil
+}
+
+// clearStrandedClaim returns a sandbox left behind by an earlier create whose
+// claim never reached disk and whose compensating release failed. Until it is
+// gone this key cannot be reused: its credential lives only in memory.
+func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
+	p.mu.RLock()
+	c, held := p.claims[key]
+	_, pending := p.tentative[key]
+	p.mu.RUnlock()
+	if !held || !pending {
+		return nil
+	}
+
+	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
+		var he *sandboxd.HTTPError
+		if !errors.As(err, &he) || he.StatusCode != 404 {
+			return fmt.Errorf("pod %s: a previous sandbox %s could not be returned and its credential is only in memory: %w", key, c.ID, err)
+		}
+	}
+	p.mu.Lock()
+	if cur, ok := p.claims[key]; ok && cur.ID == c.ID {
+		delete(p.claims, key)
+		delete(p.pods, key)
+	}
+	delete(p.tentative, key)
+	p.mu.Unlock()
+	p.log.Info("returned a stranded sandbox before reusing its pod key", "pod", key, "claim", c.ID)
 	return nil
 }
 

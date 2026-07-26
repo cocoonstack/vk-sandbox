@@ -88,11 +88,18 @@ kubelet retries with the credential intact.
 
 ## Claims table persistence
 
-The claims table (`{id, token, address, podUID}` per pod key) is written to
-`--state-path` as JSON with a tmp-file + rename, mode `0600`, directory mode
-`0700`. It is reloaded at startup, so a provider restart keeps the authority
-to tear down exactly what it delivered. An empty `--state-path` disables
-persistence (used by tests).
+The claims table (`{id, token, address, podUID, claimedAt}` per pod key) is
+written to `--state-path` as JSON with a tmp-file + rename, mode `0600`,
+directory mode `0700`. It is reloaded at startup, so a provider restart keeps
+the authority to tear down exactly what it delivered. The binary requires the
+flag; only the in-process constructor accepts an empty path, for tests.
+
+A claim is durable before it counts: until its own write lands it is invisible
+to status and to adoption, and a create whose write fails returns the sandbox
+rather than reporting Running. At startup the reloaded table is checked against
+the node's live sandboxes and rows the node no longer holds are dropped — but a
+failed listing is not an empty list, so an unreadable sandboxd leaves the table
+untouched.
 
 ## Audit-only orphan scan
 

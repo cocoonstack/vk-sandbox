@@ -133,6 +133,7 @@ func New(cfg Config) (*Provider, error) {
 	if err := p.loadState(); err != nil {
 		return nil, err
 	}
+	p.dropClaimsTheNodeNoLongerHolds(context.Background())
 	// Prove the claims table is writable before accepting any Pod. Running with an
 	// unwritable state path would persist no release credential, so every claim
 	// this process made would leak its microVM on restart. Failing here instead
@@ -247,6 +248,32 @@ func (p *Provider) loadState() error {
 	return nil
 }
 
+// dropClaimsTheNodeNoLongerHolds removes rows for sandboxes this node does not
+// have. A release whose save failed leaves such a row behind, and reloading it
+// would let a same-key Pod adopt a destroyed sandbox and report it Running.
+// A failed listing is NOT an empty list — the 2026-05-15 rule — so the table is
+// left untouched when sandboxd cannot be read.
+func (p *Provider) dropClaimsTheNodeNoLongerHolds(ctx context.Context) {
+	if p.lister == nil || len(p.claims) == 0 {
+		return
+	}
+	listed, err := p.lister.ListSandboxes(ctx)
+	if err != nil {
+		p.log.Info("sandboxd list failed at startup; keeping the claims table as loaded", "err", err.Error())
+		return
+	}
+	live := make(map[string]struct{}, len(listed))
+	for _, s := range listed {
+		live[s.ID] = struct{}{}
+	}
+	for key, c := range p.claims {
+		if _, ok := live[c.ID]; !ok {
+			delete(p.claims, key)
+			p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", c.ID)
+		}
+	}
+}
+
 // saveState persists the claims table, logging rather than returning a failure.
 // Its callers are the paths that have already changed what the node holds —
 // adoption of a preserved claim, and release — where there is nothing left to
@@ -257,26 +284,18 @@ func (p *Provider) saveState() {
 	}
 }
 
-// commitClaim makes a tentative claim durable. Clearing the marker and writing
-// are one step under saveMu: otherwise a concurrent save could observe the key
-// as committed and write it, and this write could then fail and mark it
-// tentative again, leaving the table on disk disagreeing with memory.
+// commitClaim makes a tentative claim durable. The marker is cleared only after
+// the rename lands, so the claim never looks durable during the write itself.
 func (p *Provider) commitClaim(key string) error {
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
 
+	if err := p.write(key); err != nil {
+		return err
+	}
 	p.mu.Lock()
 	delete(p.tentative, key)
 	p.mu.Unlock()
-
-	if err := p.write(); err != nil {
-		p.mu.Lock()
-		if _, stillClaimed := p.claims[key]; stillClaimed {
-			p.tentative[key] = struct{}{}
-		}
-		p.mu.Unlock()
-		return err
-	}
 	return nil
 }
 
@@ -284,19 +303,19 @@ func (p *Provider) commitClaim(key string) error {
 func (p *Provider) persist() error {
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
-	return p.write()
+	return p.write("")
 }
 
-// write serializes the durable claims and replaces the state file. Callers hold
-// saveMu.
-func (p *Provider) write() error {
+// write serializes the durable claims — plus committing, the key being made
+// durable by this call — and replaces the state file. Callers hold saveMu.
+func (p *Provider) write(committing string) error {
 	if p.statePath == "" {
 		return nil
 	}
 	p.mu.RLock()
 	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
 	for k, c := range p.claims {
-		if _, pending := p.tentative[k]; !pending {
+		if _, pending := p.tentative[k]; !pending || k == committing {
 			st.Claims[k] = c
 		}
 	}

@@ -603,7 +603,10 @@ func TestATentativeClaimIsNeverReportedRunning(t *testing.T) {
 	}
 }
 
-func TestATentativeClaimIsNotAdopted(t *testing.T) {
+func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
+	// A claim whose write and compensating release both failed holds a live
+	// microVM whose credential exists only in memory. Claiming over it would
+	// destroy the only handle to that sandbox.
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
 	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
@@ -616,12 +619,31 @@ func TestATentativeClaimIsNotAdopted(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
 	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", ""))
-	before := sd.claims
+	p.mu.RLock()
+	stranded := p.claims["ns/p"]
+	p.mu.RUnlock()
+	if stranded.ID == "" {
+		t.Fatal("setup: expected a stranded claim")
+	}
 
-	// A replacement Pod must not adopt a claim that was never made durable.
-	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u2", "", ""))
-	if sd.claims == before {
-		t.Fatal("the replacement adopted a tentative claim instead of claiming afresh")
+	// sandboxd is still unreachable: the create must refuse rather than orphan it.
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u2", "", "")); err == nil {
+		t.Fatal("a replacement claimed over a stranded sandbox instead of failing")
+	}
+	p.mu.RLock()
+	still := p.claims["ns/p"]
+	p.mu.RUnlock()
+	if still.ID != stranded.ID {
+		t.Fatalf("the stranded credential was overwritten: %q -> %q", stranded.ID, still.ID)
+	}
+
+	// Once sandboxd answers again the key is reusable.
+	sd.releaseErr = nil
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u3", "", "")); err == nil {
+		t.Log("create succeeded after the stranded sandbox was returned")
+	}
+	if len(sd.releases) == 0 {
+		t.Error("the stranded sandbox was never returned")
 	}
 }
 
@@ -649,6 +671,42 @@ func TestATentativeClaimCanStillBeReleased(t *testing.T) {
 	}
 	if len(sd.releases) != 1 {
 		t.Fatalf("a tentative claim was never released: releases=%v", sd.releases)
+	}
+}
+
+func TestStartupDropsAClaimTheNodeNoLongerHolds(t *testing.T) {
+	// A release whose save failed leaves this row behind. Reloading it would let
+	// a same-key Pod adopt a destroyed sandbox and report it Running.
+	path := t.TempDir() + "/claims.json"
+	stale := `{"claims":{"ns/p":{"id":"sb_gone","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_other"}}}
+	p, err := New(Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.heldClaimFor("ns/p"); ok {
+		t.Fatal("a claim for a sandbox the node does not hold survived startup")
+	}
+}
+
+func TestStartupKeepsTheTableWhenTheNodeCannotBeListed(t *testing.T) {
+	// A failed query is not an empty list (2026-05-15): treating it as one once
+	// deleted every active VM's state in a single sweep.
+	path := t.TempDir() + "/claims.json"
+	current := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(current), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.heldClaimFor("ns/p"); !ok {
+		t.Fatal("an unreadable sandboxd wiped the claims table")
 	}
 }
 
