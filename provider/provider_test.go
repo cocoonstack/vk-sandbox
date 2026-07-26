@@ -426,25 +426,21 @@ func TestSaveStateRecreatesADeletedStateDir(t *testing.T) {
 	}
 }
 
-func TestLoadStateDoesNotRewriteAnAlreadyStampedTable(t *testing.T) {
-	path := t.TempDir() + "/claims.json"
+func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
+	// Not just on migration: any unwritable state path must stop the node before
+	// it takes a Pod, because every claim it made would leak on restart.
+	dir := t.TempDir()
 	current := `{"claims":{"ns/p":{"id":"sb_1","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
-	if err := os.WriteFile(path, []byte(current), 0o600); err != nil {
+	if err := os.WriteFile(dir+"/claims.json", []byte(current), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.Stat(path)
-	if err != nil {
+	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Config{StatePath: path, Logger: logr.Discard()}); err != nil {
-		t.Fatal(err)
-	}
-	after, err := os.Stat(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
-		t.Fatalf("a table needing no backfill was rewritten on startup (%v -> %v)", before.ModTime(), after.ModTime())
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	if _, err := New(Config{StatePath: dir + "/claims.json", Logger: logr.Discard()}); err == nil {
+		t.Fatal("New accepted a state path it cannot write")
 	}
 }
 

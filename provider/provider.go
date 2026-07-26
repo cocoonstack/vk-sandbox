@@ -115,13 +115,15 @@ func New(cfg Config) (*Provider, error) {
 		pods:      map[string]*corev1.Pod{},
 		claims:    map[string]Claim{},
 	}
-	if p.statePath != "" {
-		if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
-			return nil, fmt.Errorf("create state dir: %w", err)
-		}
-	}
 	if err := p.loadState(); err != nil {
 		return nil, err
+	}
+	// Prove the claims table is writable before accepting any Pod. Running with an
+	// unwritable state path would persist no release credential, so every claim
+	// this process made would leak its microVM on restart. Failing here instead
+	// keeps the virtual node out of scheduling until the path is fixed.
+	if err := p.persist(); err != nil {
+		return nil, fmt.Errorf("claims state is not writable: %w", err)
 	}
 	return p, nil
 }
@@ -202,24 +204,16 @@ func (p *Provider) loadState() error {
 		return nil
 	}
 	// A table written before ClaimedAt existed would otherwise report a Pod start
-	// time that moves on every status read, so settle it once here.
+	// time that moves on every status read. New persists right after this, which
+	// is what settles it for good.
 	now := metav1.Now()
-	backfilled := false
 	for k, c := range st.Claims {
 		if c.ClaimedAt.IsZero() {
 			c.ClaimedAt = now
 			st.Claims[k] = c
-			backfilled = true
 		}
 	}
 	p.claims = st.Claims
-	if backfilled {
-		// Startup, not the hot path: a migration that cannot be written would
-		// silently re-pick a new timestamp on every restart, so fail loudly.
-		if err := p.persist(); err != nil {
-			return fmt.Errorf("persist claimedAt migration: %w", err)
-		}
-	}
 	return nil
 }
 
