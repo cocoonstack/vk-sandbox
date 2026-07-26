@@ -75,7 +75,8 @@ stubbed regardless. Client certificates are not requested
 ## Claims state file
 
 `--state-path` holds the durable claim table -- the release credentials that
-make this provider the only party able to destroy the VMs it delivered:
+make this provider the only party able to destroy the VMs it delivered. It is
+written compactly (shown expanded here) because every claim rewrites it:
 
 ```json
 {
@@ -98,7 +99,9 @@ make this provider the only party able to destroy the VMs it delivered:
 | `podUID` | UID of the Pod currently bound to the claim (the stale-request guard) |
 
 It is written with a tmp-file + atomic rename at mode `0600`, its directory
-created at `0700`, and reloaded on startup. **Treat it as a secret** -- it
+created at `0700`, and reloaded on startup. Concurrent Pod creates serialize
+their writes, so the file always reflects the newest table rather than whichever
+snapshot happened to land last. **Treat it as a secret** -- it
 contains release tokens. A missing file is not an error; a malformed one is
 fatal at startup rather than silently discarding live authority.
 
