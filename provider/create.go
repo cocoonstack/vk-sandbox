@@ -82,6 +82,14 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
+	// An unverified row from a previous process may still be a live sandbox whose
+	// only credential is that row. Resolve it before the key is reused: a listing
+	// either vouches for it — in which case the adoption above applies on the
+	// retry — or proves it gone.
+	if err := p.resolveUnverifiedClaim(ctx, key); err != nil {
+		return err
+	}
+
 	// A stranded claim from an earlier failed create still holds a live microVM
 	// and its credential exists nowhere else. Claiming over it would destroy the
 	// only handle to that sandbox, so it is returned first.
@@ -131,6 +139,22 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	p.log.Info("claimed hot sandbox", "pod", key, "claim", c.ID, "addr", c.Address)
 	p.pushRunning(pod, c)
 	return nil
+}
+
+// resolveUnverifiedClaim settles a quarantined row before its pod key is reused.
+// Claiming over it would strand a live sandbox whose only credential is that
+// row, so an unresolvable one fails the create and leaves the Pod pending.
+func (p *Provider) resolveUnverifiedClaim(ctx context.Context, key string) error {
+	p.mu.RLock()
+	_, unverified := p.quarantined[key]
+	p.mu.RUnlock()
+	if !unverified {
+		return nil
+	}
+	if p.VerifyClaimsAgainstNode(ctx) {
+		return nil
+	}
+	return fmt.Errorf("pod %s: a claim from a previous run is unverified and sandboxd cannot be listed; refusing to claim over a possibly live sandbox", key)
 }
 
 // clearStrandedClaim returns a sandbox left behind by an earlier create whose

@@ -857,6 +857,68 @@ func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
 	}
 }
 
+func TestARestartDoesNotClaimOverAnUnverifiedSandbox(t *testing.T) {
+	// The real restart path: pods is empty, so virtual-kubelet issues CreatePod
+	// for a Pod whose sandbox this node may still hold. Claiming a second one
+	// would strand the first, whose only credential is the loaded row.
+	path := t.TempDir() + "/claims.json"
+	loaded := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(loaded), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err == nil {
+		t.Fatal("a create claimed over an unverified sandbox instead of refusing")
+	}
+	if sd.claims != 0 {
+		t.Errorf("a second sandbox was claimed: claims=%d", sd.claims)
+	}
+	held, ok := p.heldClaimFor("ns/p")
+	if !ok || held.ID != "sb_prev" {
+		t.Errorf("the previous credential was lost: %+v ok=%v", held, ok)
+	}
+}
+
+func TestVerificationIgnoresAClaimMadeAfterItsListing(t *testing.T) {
+	// The listing completes, then a create commits a claim the listing never saw.
+	// Judging that claim by the stale list would drop a live sandbox's row.
+	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd := &listAfterHook{}
+	p.lister = sd
+	sd.onList = func() {
+		p.mu.Lock()
+		p.claims["ns/new"] = Claim{ID: "sb_new", Token: "t"}
+		p.mu.Unlock()
+	}
+
+	if !p.VerifyClaimsAgainstNode(t.Context()) {
+		t.Fatal("verification did not run")
+	}
+	if _, ok := p.heldClaimFor("ns/new"); !ok {
+		t.Fatal("a claim created after the listing was dropped by that listing")
+	}
+}
+
+// listAfterHook lets a test slip a claim in between the listing and the lock.
+type listAfterHook struct {
+	onList func()
+}
+
+func (l *listAfterHook) ListSandboxes(_ context.Context) ([]ListedSandbox, error) {
+	if l.onList != nil {
+		l.onList()
+	}
+	return nil, nil
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu         sync.Mutex

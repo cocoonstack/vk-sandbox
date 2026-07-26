@@ -58,6 +58,7 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	delete(p.claims, key)
 	delete(p.pods, key)
 	delete(p.tentative, key)
+	delete(p.quarantined, key)
 	p.mu.Unlock()
 	p.saveState()
 	return nil

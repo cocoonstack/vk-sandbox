@@ -275,6 +275,15 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 	if p.lister == nil {
 		return false
 	}
+	// Snapshot first: a claim made while the listing is in flight is not in it,
+	// and judging that claim by this list would drop a row for a live sandbox.
+	p.mu.RLock()
+	before := make(map[string]string, len(p.claims))
+	for k, c := range p.claims {
+		before[k] = c.ID
+	}
+	p.mu.RUnlock()
+
 	listed, err := p.lister.ListSandboxes(ctx)
 	if err != nil {
 		p.log.Info("sandboxd list failed; claims stay unverified", "err", err.Error())
@@ -287,8 +296,12 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for key, c := range p.claims {
-		if _, ok := live[c.ID]; ok {
+	for key, id := range before {
+		c, still := p.claims[key]
+		if !still || c.ID != id {
+			continue // replaced since the snapshot; this listing cannot judge it
+		}
+		if _, ok := live[id]; ok {
 			delete(p.quarantined, key)
 			continue
 		}
@@ -297,7 +310,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		}
 		delete(p.claims, key)
 		delete(p.quarantined, key)
-		p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", c.ID)
+		p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", id)
 	}
 	return true
 }
