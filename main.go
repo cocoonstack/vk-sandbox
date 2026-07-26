@@ -52,6 +52,10 @@ const (
 	sandboxdMaxIdleConns    = 64
 	sandboxdIdleConnTimeout = 90 * time.Second
 
+	// claimVerifyInterval is how often an unverified claims table is re-checked
+	// against the node. It stops once everything is vouched for.
+	claimVerifyInterval = 15 * time.Second
+
 	// TaintKey marks the virtual node; the operator's runtime mutator adds the
 	// matching toleration to sandbox pods it routes here.
 	TaintKey = "virtual-kubelet.io/provider"
@@ -192,6 +196,9 @@ func (o *options) run() error {
 	if o.orphanInterval > 0 {
 		go p.RunOrphanScan(ctx, o.orphanInterval)
 	}
+	// Independent of the audit scan: a startup that could not reach sandboxd
+	// leaves claims unusable until a listing vouches for them.
+	go p.RunClaimVerification(ctx, claimVerifyInterval)
 	if o.publishInventory {
 		if err := o.startInventoryPublisher(ctx, cfg, p, lister); err != nil {
 			return err

@@ -810,6 +810,53 @@ func TestVerificationClearsTheQuarantineForALiveSandbox(t *testing.T) {
 	}
 }
 
+func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
+	// --orphan-scan-interval=0 switches the audit off. Verification must still
+	// run, or a startup that could not reach sandboxd would leave the node's own
+	// sandboxes unusable for the process's lifetime.
+	path := t.TempDir() + "/claims.json"
+	live := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(live), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.claimFor("ns/p"); ok {
+		t.Fatal("setup: the claim should start quarantined")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.RunClaimVerification(t.Context(), 5*time.Millisecond)
+		close(done)
+	}()
+
+	sd.mu.Lock()
+	sd.listErr = nil
+	sd.live = []ListedSandbox{{ID: "sb_live"}}
+	sd.mu.Unlock()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		if _, ok := p.claimFor("ns/p"); ok {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("the quarantine never lifted")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Error("verification kept running after the table was vouched for")
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu         sync.Mutex

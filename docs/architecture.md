@@ -100,8 +100,9 @@ rather than reporting Running. At startup the reloaded table is checked against
 the node's live sandboxes and rows the node no longer holds are dropped. A
 failed listing is not an empty list, so an unreadable sandboxd drops nothing —
 the rows are quarantined instead: still releasable, but not adoptable and not
-Running until a later listing vouches for them. The orphan scan's listing is
-what lifts the quarantine.
+Running until a later listing vouches for them. A verification loop, independent of the audit scan so
+that switching the audit off cannot strand them, lifts the quarantine as soon
+as a listing succeeds and then stops.
 
 ## Audit-only orphan scan
 

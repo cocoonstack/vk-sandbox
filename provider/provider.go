@@ -302,6 +302,13 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 	return true
 }
 
+// hasQuarantined reports whether any loaded row is still unverified.
+func (p *Provider) hasQuarantined() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.quarantined) > 0
+}
+
 // quarantineLoadedClaims marks every loaded row unverified, for the case where
 // startup could not reach sandboxd. The next successful listing clears them.
 func (p *Provider) quarantineLoadedClaims() {

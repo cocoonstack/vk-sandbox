@@ -65,10 +65,26 @@ func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			// Reconciling here is what lifts a startup quarantine: the same
-			// listing that finds orphans also vouches for the loaded claims.
-			p.VerifyClaimsAgainstNode(ctx)
 			p.OrphanScan(ctx)
+		}
+	}
+}
+
+// RunClaimVerification re-checks the claims table against the node until ctx is
+// done. It is separate from the orphan scan because that one is an operator
+// audit an operator may switch off, while this is what lifts a startup
+// quarantine — a claim the node still holds must become usable again.
+func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if p.VerifyClaimsAgainstNode(ctx) && !p.hasQuarantined() {
+				return // the table is vouched for; nothing left to re-check
+			}
 		}
 	}
 }
