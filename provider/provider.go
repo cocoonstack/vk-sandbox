@@ -105,6 +105,11 @@ func New(cfg Config) (*Provider, error) {
 		pods:      map[string]*corev1.Pod{},
 		claims:    map[string]Claim{},
 	}
+	if p.statePath != "" {
+		if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
+			return nil, fmt.Errorf("create state dir: %w", err)
+		}
+	}
 	if err := p.loadState(); err != nil {
 		return nil, err
 	}
@@ -161,8 +166,6 @@ func (p *Provider) podUIDIsCurrent(key string, pod *corev1.Pod) bool {
 	return cur.UID == pod.UID
 }
 
-// --- state persistence -------------------------------------------------------
-
 type stateFile struct {
 	Claims map[string]Claim `json:"claims"`
 }
@@ -200,16 +203,12 @@ func (p *Provider) saveState() {
 	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
 	maps.Copy(st.Claims, p.claims)
 	p.mu.RUnlock()
-	b, err := json.MarshalIndent(st, "", "  ")
+	b, err := json.Marshal(st)
 	if err != nil {
 		p.log.Error(err, "encode claims state")
 		return
 	}
 	tmp := p.statePath + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
-		p.log.Error(err, "mkdir state dir")
-		return
-	}
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
 		p.log.Error(err, "write claims state")
 		return

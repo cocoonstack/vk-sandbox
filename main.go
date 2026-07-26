@@ -44,9 +44,17 @@ import (
 	"github.com/cocoonstack/vk-sandbox/version"
 )
 
-// TaintKey marks the virtual node; the operator's runtime mutator adds the
-// matching toleration to sandbox pods it routes here.
-const TaintKey = "virtual-kubelet.io/provider"
+const (
+	// Sized to the per-node pod-create fan-out: every claim targets the one
+	// node-local sandboxd, so idle connections are pooled against a single host.
+	sandboxdRequestTimeout  = 10 * time.Second
+	sandboxdMaxIdleConns    = 64
+	sandboxdIdleConnTimeout = 90 * time.Second
+
+	// TaintKey marks the virtual node; the operator's runtime mutator adds the
+	// matching toleration to sandbox pods it routes here.
+	TaintKey = "virtual-kubelet.io/provider"
+)
 
 func main() {
 	var (
@@ -105,8 +113,20 @@ func main() {
 		token = strings.TrimSpace(string(b))
 	}
 
-	sdClient := sandboxd.New(*sandboxdURL, token)
-	lister := sandboxdx.NewListClient(*sandboxdURL, token, 0)
+	// One pooled client for the claim path. A bare &http.Client{} falls back to
+	// http.DefaultTransport, whose MaxIdleConnsPerHost of 2 forces a fresh
+	// handshake on every concurrent pod create past the second, and has no
+	// timeout, so a wedged sandboxd would hold the create goroutine forever.
+	hc := &http.Client{
+		Timeout: sandboxdRequestTimeout,
+		Transport: &http.Transport{
+			MaxIdleConns:        sandboxdMaxIdleConns,
+			MaxIdleConnsPerHost: sandboxdMaxIdleConns,
+			IdleConnTimeout:     sandboxdIdleConnTimeout,
+		},
+	}
+	sdClient := sandboxd.New(*sandboxdURL, token, sandboxd.WithHTTPClient(hc))
+	lister := sandboxdx.NewListClient(*sandboxdURL, token, sandboxdRequestTimeout)
 
 	p, err := provider.New(provider.Config{
 		NodeName:  *nodeName,

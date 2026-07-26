@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -270,6 +271,29 @@ func TestRuntimeMismatchRejected(t *testing.T) {
 	}
 	if sd.claimCount() != 0 {
 		t.Fatalf("mismatched pod must not claim; claims=%d", sd.claimCount())
+	}
+}
+
+func TestLoadStateReadsIndentedFileFromOlderBuild(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	old := `{
+  "claims": {
+    "ns/pod-1": {
+      "id": "sb_1",
+      "token": "tok",
+      "podUID": "u1"
+    }
+  }
+}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if got, ok := p.claimFor("ns/pod-1"); !ok || got.ID != "sb_1" || got.Token != "tok" {
+		t.Fatalf("indented state from an older build did not load: %+v ok=%v", got, ok)
 	}
 }
 
