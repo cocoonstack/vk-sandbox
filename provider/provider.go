@@ -67,7 +67,10 @@ type Claim struct {
 	ID      string `json:"id"`
 	Token   string `json:"token"`
 	Address string `json:"address,omitempty"`
-	PodUID  string `json:"podUID"`
+	// PodUID is written for operator forensics — which Pod generation last held
+	// this sandbox. The stale-request guard reads the in-memory pod table, not
+	// this field, so a restart does not depend on it.
+	PodUID string `json:"podUID"`
 	// ClaimedAt is when this claim was taken. Status reads report it as the Pod
 	// start time, which must not move between reads; a table written by an older
 	// build has none, so the first read after upgrade settles it.
