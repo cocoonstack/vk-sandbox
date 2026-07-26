@@ -140,10 +140,12 @@ func New(cfg Config) (*Provider, error) {
 	if err := p.loadState(); err != nil {
 		return nil, err
 	}
-	// Without a lister nothing can ever vouch for the table, so quarantining
+	// Nothing has vouched for a table read off disk, so it starts quarantined and
+	// a listing settles it. Without a lister nothing ever could, and quarantining
 	// would hide it forever; that shape is tests and the no-inventory path.
-	if p.lister != nil && !p.VerifyClaimsAgainstNode(context.Background()) {
+	if p.lister != nil {
 		p.quarantineLoadedClaims()
+		p.VerifyClaimsAgainstNode(context.Background())
 	}
 	// Prove the claims table is writable before accepting any Pod. Running with an
 	// unwritable state path would persist no release credential, so every claim
@@ -262,9 +264,11 @@ func (p *Provider) loadState() error {
 	return nil
 }
 
-// VerifyClaimsAgainstNode reconciles the claims table with the sandboxes the
-// node actually holds: rows whose sandbox is gone are dropped, and the rest are
-// confirmed. A release whose save failed leaves such a row behind, and reloading
+// VerifyClaimsAgainstNode settles the rows no listing has vouched for yet:
+// those the node still holds leave quarantine, those it does not are dropped.
+// It deliberately judges nothing else — a row this process created is already
+// known good, and judging it against a listing taken moments earlier is how a
+// live sandbox loses its record. A release whose save failed leaves such a row behind, and reloading
 // it would let a same-key Pod adopt a destroyed sandbox and report it Running.
 //
 // A failed listing is NOT an empty list — the 2026-05-15 rule — so nothing is
@@ -278,11 +282,16 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 	// Snapshot first: a claim made while the listing is in flight is not in it,
 	// and judging that claim by this list would drop a row for a live sandbox.
 	p.mu.RLock()
-	before := make(map[string]string, len(p.claims))
-	for k, c := range p.claims {
-		before[k] = c.ID
+	before := make(map[string]string, len(p.quarantined))
+	for k := range p.quarantined {
+		if c, ok := p.claims[k]; ok {
+			before[k] = c.ID
+		}
 	}
 	p.mu.RUnlock()
+	if len(before) == 0 {
+		return true // nothing unverified: the listing has nothing to judge
+	}
 
 	listed, err := p.lister.ListSandboxes(ctx)
 	if err != nil {

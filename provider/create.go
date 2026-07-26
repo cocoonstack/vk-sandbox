@@ -74,15 +74,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	// release credential is already durable — it was persisted when the sandbox
 	// was first claimed — so this save only refreshes which Pod holds it, and a
 	// failure costs nothing recoverable. That is why it stays log-only.
-	if c, ok := p.claimFor(key); ok {
-		p.mu.Lock()
-		c.PodUID = string(pod.UID)
-		if c.ClaimedAt.IsZero() {
-			c.ClaimedAt = metav1.Now()
-		}
-		p.claims[key] = c
-		p.pods[key] = pod.DeepCopy()
-		p.mu.Unlock()
+	if c, ok := p.adoptExistingClaim(key, pod); ok {
 		p.saveState()
 		p.log.Info("adopted preserved sandbox for replacement pod", "pod", key, "claim", c.ID)
 		p.pushRunning(pod, c)
@@ -109,6 +101,9 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		Net:        ann(pod, AnnNet, ""),
 		Size:       ann(pod, AnnSize, ""),
 		TTLSeconds: ttl,
+		// The node echoes this back in its operator index, which is what lets a
+		// claim whose response never arrived be traced to the Pod it was for.
+		ClaimRef: key,
 	}
 	if spec.Template == "" {
 		return fmt.Errorf("pod %s: missing %s annotation", key, AnnTemplate)
@@ -138,6 +133,31 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	p.log.Info("claimed hot sandbox", "pod", key, "claim", c.ID, "addr", c.Address)
 	p.pushRunning(pod, c)
 	return nil
+}
+
+// adoptExistingClaim binds pod to the claim already held for its key. The read
+// and the write are one locked step: verification can drop a row between them,
+// and writing an outside copy back would resurrect a sandbox that is gone.
+func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	c, ok := p.claims[key]
+	if !ok {
+		return Claim{}, false
+	}
+	if _, pending := p.tentative[key]; pending {
+		return Claim{}, false
+	}
+	if _, unverified := p.quarantined[key]; unverified {
+		return Claim{}, false
+	}
+	c.PodUID = string(pod.UID)
+	if c.ClaimedAt.IsZero() {
+		c.ClaimedAt = metav1.Now()
+	}
+	p.claims[key] = c
+	p.pods[key] = pod.DeepCopy()
+	return c, true
 }
 
 // resolveUnverifiedClaim settles a quarantined row before its pod key is reused.

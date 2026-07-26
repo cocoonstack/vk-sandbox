@@ -884,26 +884,34 @@ func TestARestartDoesNotClaimOverAnUnverifiedSandbox(t *testing.T) {
 	}
 }
 
-func TestVerificationIgnoresAClaimMadeAfterItsListing(t *testing.T) {
-	// The listing completes, then a create commits a claim the listing never saw.
-	// Judging that claim by the stale list would drop a live sandbox's row.
+func TestVerificationLeavesRowsItWasNeverAskedToJudge(t *testing.T) {
+	// Verification exists to settle rows nothing has vouched for. A row this
+	// process created is already known good, and judging it against a listing
+	// taken moments earlier is exactly how a live sandbox loses its record.
 	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	sd := &listAfterHook{}
-	p.lister = sd
-	sd.onList = func() {
+	hook := &listAfterHook{}
+	p.lister = hook
+	hook.onList = func() {
 		p.mu.Lock()
 		p.claims["ns/new"] = Claim{ID: "sb_new", Token: "t"}
 		p.mu.Unlock()
 	}
+	p.mu.Lock()
+	p.claims["ns/old"] = Claim{ID: "sb_old", Token: "t"}
+	p.quarantined["ns/old"] = struct{}{}
+	p.mu.Unlock()
 
 	if !p.VerifyClaimsAgainstNode(t.Context()) {
 		t.Fatal("verification did not run")
 	}
 	if _, ok := p.heldClaimFor("ns/new"); !ok {
-		t.Fatal("a claim created after the listing was dropped by that listing")
+		t.Error("a row created during the listing was judged by it")
+	}
+	if _, ok := p.heldClaimFor("ns/old"); ok {
+		t.Error("a quarantined row the node does not hold survived")
 	}
 }
 
@@ -940,6 +948,48 @@ func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
 	}
 }
 
+func TestClaimCarriesItsPodKey(t *testing.T) {
+	// sandboxd echoes ClaimRef in its operator index. Without it a claim whose
+	// HTTP response was lost cannot be traced back to the Pod it belongs to.
+	sd := &fakeSandboxd{}
+	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatal(err)
+	}
+	if sd.lastSpec.ClaimRef != "ns/p" {
+		t.Errorf("ClaimRef = %q, want %q", sd.lastSpec.ClaimRef, "ns/p")
+	}
+}
+
+func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
+	// The verifier runs alongside CreatePod. If adoption reads the row, the
+	// verifier drops it, and adoption then writes its copy back, a released
+	// sandbox reappears and is published Running.
+	sd := &fakeSandboxd{}
+	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.claims["ns/p"] = Claim{ID: "sb_gone", Token: "t"}
+	p.mu.Unlock()
+
+	// Stand in for the verifier winning the race.
+	p.mu.Lock()
+	delete(p.claims, "ns/p")
+	p.mu.Unlock()
+
+	if _, ok := p.adoptExistingClaim("ns/p", sandboxPod("ns", "p", "u", "", "")); ok {
+		t.Fatal("adoption resurrected a row verification had removed")
+	}
+	if _, ok := p.heldClaimFor("ns/p"); ok {
+		t.Error("the removed row came back")
+	}
+}
+
 // listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()
@@ -961,11 +1011,13 @@ type fakeSandboxd struct {
 	live       []ListedSandbox
 	claimErr   error
 	releaseErr error
+	lastSpec   sandboxd.ClaimSpec
 }
 
-func (f *fakeSandboxd) Claim(_ context.Context, _ sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
+func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lastSpec = spec
 	if f.claimErr != nil {
 		return sandboxd.ClaimResult{}, f.claimErr
 	}
