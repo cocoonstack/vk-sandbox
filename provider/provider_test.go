@@ -625,6 +625,33 @@ func TestATentativeClaimIsNotAdopted(t *testing.T) {
 	}
 }
 
+func TestATentativeClaimCanStillBeReleased(t *testing.T) {
+	// A claim that never reached disk still holds a live microVM. Hiding it from
+	// DeletePod as well would strand that VM until sandboxd's TTL.
+	dir := t.TempDir()
+	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	pod := sandboxPod("ns", "p", "u1", "", "")
+	_ = p.CreatePod(t.Context(), pod)
+
+	// sandboxd is reachable again; the delete must reach the tentative claim.
+	sd.releaseErr = nil
+	if err := p.DeletePod(t.Context(), pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	if len(sd.releases) != 1 {
+		t.Fatalf("a tentative claim was never released: releases=%v", sd.releases)
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu         sync.Mutex

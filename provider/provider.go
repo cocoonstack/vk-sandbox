@@ -162,7 +162,7 @@ func (p *Provider) notify(pod *corev1.Pod) {
 }
 
 // claimFor returns the durable claim bound to key. A claim whose credential is
-// not on disk yet is not returned: it can still be rolled back, so nothing may
+// not on disk yet is withheld: it can still be rolled back, so nothing may
 // report it Running or adopt it.
 func (p *Provider) claimFor(key string) (Claim, bool) {
 	p.mu.RLock()
@@ -170,6 +170,16 @@ func (p *Provider) claimFor(key string) (Claim, bool) {
 	if _, pending := p.tentative[key]; pending {
 		return Claim{}, false
 	}
+	c, ok := p.claims[key]
+	return c, ok
+}
+
+// heldClaimFor returns the claim bound to key whether or not it is durable yet.
+// Release paths use this: a tentative claim still holds a live microVM, and
+// withholding it from delete would strand that VM until sandboxd's TTL.
+func (p *Provider) heldClaimFor(key string) (Claim, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	c, ok := p.claims[key]
 	return c, ok
 }
@@ -247,15 +257,19 @@ func (p *Provider) saveState() {
 	}
 }
 
-// commitClaim makes a tentative claim durable. The key leaves the tentative set
-// first so this write includes it; a failure puts it back, keeping the claim
-// invisible to Running and to adoption until the caller rolls it back.
+// commitClaim makes a tentative claim durable. Clearing the marker and writing
+// are one step under saveMu: otherwise a concurrent save could observe the key
+// as committed and write it, and this write could then fail and mark it
+// tentative again, leaving the table on disk disagreeing with memory.
 func (p *Provider) commitClaim(key string) error {
+	p.saveMu.Lock()
+	defer p.saveMu.Unlock()
+
 	p.mu.Lock()
 	delete(p.tentative, key)
 	p.mu.Unlock()
 
-	if err := p.persist(); err != nil {
+	if err := p.write(); err != nil {
 		p.mu.Lock()
 		if _, stillClaimed := p.claims[key]; stillClaimed {
 			p.tentative[key] = struct{}{}
@@ -268,12 +282,17 @@ func (p *Provider) commitClaim(key string) error {
 
 // persist atomically writes the claims table. Callers hold no lock.
 func (p *Provider) persist() error {
+	p.saveMu.Lock()
+	defer p.saveMu.Unlock()
+	return p.write()
+}
+
+// write serializes the durable claims and replaces the state file. Callers hold
+// saveMu.
+func (p *Provider) write() error {
 	if p.statePath == "" {
 		return nil
 	}
-	p.saveMu.Lock()
-	defer p.saveMu.Unlock()
-
 	p.mu.RLock()
 	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
 	for k, c := range p.claims {

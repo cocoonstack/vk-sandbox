@@ -28,7 +28,7 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	c, hasClaim := p.claimFor(key)
+	c, hasClaim := p.heldClaimFor(key)
 	if !hasClaim {
 		p.forgetPod(key)
 		return nil
@@ -57,6 +57,7 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	p.mu.Lock()
 	delete(p.claims, key)
 	delete(p.pods, key)
+	delete(p.tentative, key)
 	p.mu.Unlock()
 	p.saveState()
 	return nil
