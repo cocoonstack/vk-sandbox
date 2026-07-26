@@ -12,6 +12,19 @@ import (
 	"k8s.io/client-go/dynamic"
 )
 
+// authVerdict is the destroy-authorization decision for one pod deletion.
+type authVerdict int
+
+const (
+	// authPreserve: pod deletion is NOT authority over the sandbox — keep the
+	// claim alive for a same-key replacement pod to adopt (pod churn, eviction
+	// storms, provider restart, or an unverifiable owner query).
+	authPreserve authVerdict = iota
+	// authRelease: the owner CR is confirmed gone or in teardown — releasing
+	// the node-local sandbox is authorized.
+	authRelease
+)
+
 // controllerOwnerRef returns the pod's controller owner reference, or nil for
 // bare pods.
 func controllerOwnerRef(pod *corev1.Pod) *metav1.OwnerReference {
@@ -57,19 +70,6 @@ func pluralResource(lower string) string {
 		return lower + "s"
 	}
 }
-
-// authVerdict is the destroy-authorization decision for one pod deletion.
-type authVerdict int
-
-const (
-	// authPreserve: pod deletion is NOT authority over the sandbox — keep the
-	// claim alive for a same-key replacement pod to adopt (pod churn, eviction
-	// storms, provider restart, or an unverifiable owner query).
-	authPreserve authVerdict = iota
-	// authRelease: the owner CR is confirmed gone or in teardown — releasing
-	// the node-local sandbox is authorized.
-	authRelease
-)
 
 // destroyAuthorized decides whether deleting this pod authorizes releasing its
 // node-local sandbox (which destroys the VM). The contract, carried over from

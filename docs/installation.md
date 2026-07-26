@@ -31,9 +31,9 @@ sudo install -m 0755 vk-sandbox /usr/local/bin/
 ```bash
 git clone https://github.com/cocoonstack/vk-sandbox.git
 cd vk-sandbox
-make build                 # -> bin/vk-sandbox
-make build-linux           # -> bin/vk-sandbox-linux-amd64 (static, CGO off)
-sudo install -m 0755 bin/vk-sandbox /usr/local/bin/
+make build                 # -> ./vk-sandbox
+make build-linux           # -> ./vk-sandbox-linux-amd64 (static, CGO off)
+sudo install -m 0755 ./vk-sandbox /usr/local/bin/
 ```
 
 A container image builds straight from the repo root; the image is a
@@ -64,7 +64,7 @@ kubectl apply -f manifests/rbac.yaml
 
 The `packaging/` directory ships a unit and an environment template. The unit
 starts after `sandboxd.service`, refuses to start without a kubeconfig and an
-env file, runs from `/var/lib/vk-sandbox`, and restarts on failure.
+env file, runs from `/var/lib/vk-sandbox`, and always restarts after 5s.
 
 ```bash
 sudo install -d -m 0700 /etc/vk-sandbox /var/lib/vk-sandbox
@@ -148,6 +148,6 @@ Then create a `Sandbox` with the sandboxd runtime and watch the Pod go
 ## Development
 
 ```bash
-make all        # fmt-check vet test build
+make all        # deps fmt lint test build
 make race lint
 ```

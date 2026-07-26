@@ -8,15 +8,6 @@ import (
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
 )
 
-type stubInfoClient struct {
-	pools []extv1beta1.PoolCapacity
-	err   error
-}
-
-func (s stubInfoClient) Info(context.Context) ([]extv1beta1.PoolCapacity, error) {
-	return s.pools, s.err
-}
-
 // TestNodeInfoSource confirms the source pairs the configured advertise address
 // with the live warm-pool capacity read from sandboxd.
 func TestNodeInfoSource(t *testing.T) {
@@ -42,4 +33,13 @@ func TestNodeInfoSourceError(t *testing.T) {
 	if _, err := src.NodeInfo(context.Background()); err == nil {
 		t.Fatal("expected error to propagate")
 	}
+}
+
+type stubInfoClient struct {
+	pools []extv1beta1.PoolCapacity
+	err   error
+}
+
+func (s stubInfoClient) Info(context.Context) ([]extv1beta1.PoolCapacity, error) {
+	return s.pools, s.err
 }

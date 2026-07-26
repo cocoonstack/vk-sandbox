@@ -1,3 +1,6 @@
 /bin/
+/dist/
 /vk-sandbox
+/vk-sandbox-linux-*
 *.test
+coverage.out

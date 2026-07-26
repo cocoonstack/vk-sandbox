@@ -21,6 +21,9 @@ import (
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
+// phaseRunning is the sandbox phase a live claim reports in the inventory.
+const phaseRunning = "Running"
+
 // ClaimSnapshotter exposes the provider's pod-key → claim view.
 type ClaimSnapshotter interface {
 	SnapshotClaims() map[string]provider.Claim
@@ -76,7 +79,7 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 		if name == "" {
 			name = row.ID // pre-claim-ref claim: fall back to the id so it still shows
 		}
-		phase := "Running"
+		phase := phaseRunning
 		if row.Hibernated {
 			phase = "Hibernated"
 		}
@@ -146,7 +149,7 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 	return len(entries), nil
 }
 
-// PublishPeriodically runs Publish on interval until ctx is cancelled. Publish
+// PublishPeriodically runs Publish on interval until ctx is canceled. Publish
 // failures are logged, not fatal — the next tick rebuilds from live state.
 func (p *Publisher) PublishPeriodically(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)

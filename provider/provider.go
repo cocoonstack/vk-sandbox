@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -143,9 +144,7 @@ func (p *Provider) SnapshotClaims() map[string]Claim {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	out := make(map[string]Claim, len(p.claims))
-	for k, v := range p.claims {
-		out[k] = v
-	}
+	maps.Copy(out, p.claims)
 	return out
 }
 
@@ -199,9 +198,7 @@ func (p *Provider) saveState() {
 	}
 	p.mu.RLock()
 	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
-	for k, v := range p.claims {
-		st.Claims[k] = v
-	}
+	maps.Copy(st.Claims, p.claims)
 	p.mu.RUnlock()
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {

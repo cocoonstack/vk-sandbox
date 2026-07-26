@@ -12,16 +12,6 @@ import (
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
-type staticClaims map[string]provider.Claim
-
-func (s staticClaims) SnapshotClaims() map[string]provider.Claim { return s }
-
-type staticLister []provider.ListedSandbox
-
-func (s staticLister) ListSandboxes(context.Context) ([]provider.ListedSandbox, error) {
-	return s, nil
-}
-
 // TestLiveSandboxes publishes the node's sandboxd operator index as inventory
 // entries: each listed sandbox is named by its claim ref (falling back to the
 // sandboxd id when it has none), carries the sandboxd "sb_..." id (the release
@@ -75,24 +65,6 @@ func TestLiveSandboxes(t *testing.T) {
 	if e, ok := byName["sb_noref"]; !ok || e.Phase != "Running" || e.ID != "sb_noref" {
 		t.Errorf("ref-less claim must fall back to the id: %+v (ok=%v)", e, ok)
 	}
-}
-
-type staticLive []scale.InventoryEntry
-
-func (s staticLive) LiveSandboxes(context.Context) ([]scale.InventoryEntry, error) { return s, nil }
-
-type staticInfo struct {
-	info NodeInfo
-	err  error
-}
-
-func (s staticInfo) NodeInfo(context.Context) (NodeInfo, error) { return s.info, s.err }
-
-type captureApplier struct{ got *scale.NodeInventory }
-
-func (c *captureApplier) Apply(_ context.Context, inv *scale.NodeInventory) error {
-	c.got = inv
-	return nil
 }
 
 // TestPublisherStampsNodeInfo verifies the node's published NodeInventory carries
@@ -149,4 +121,32 @@ func TestPublisherWithoutInfo(t *testing.T) {
 	if applier.got.Address != "" || applier.got.Pools != nil {
 		t.Fatalf("nil info must leave address/pools empty: %+v", applier.got)
 	}
+}
+
+type staticClaims map[string]provider.Claim
+
+func (s staticClaims) SnapshotClaims() map[string]provider.Claim { return s }
+
+type staticLister []provider.ListedSandbox
+
+func (s staticLister) ListSandboxes(context.Context) ([]provider.ListedSandbox, error) {
+	return s, nil
+}
+
+type staticLive []scale.InventoryEntry
+
+func (s staticLive) LiveSandboxes(context.Context) ([]scale.InventoryEntry, error) { return s, nil }
+
+type staticInfo struct {
+	info NodeInfo
+	err  error
+}
+
+func (s staticInfo) NodeInfo(context.Context) (NodeInfo, error) { return s.info, s.err }
+
+type captureApplier struct{ got *scale.NodeInventory }
+
+func (c *captureApplier) Apply(_ context.Context, inv *scale.NodeInventory) error {
+	c.got = inv
+	return nil
 }

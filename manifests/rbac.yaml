@@ -38,7 +38,7 @@ rules:
     resources: ["sandboxes"]
     verbs: ["get"]
   # L3 inventory publishing (--publish-inventory).
-  - apiGroups: ["agents.x-k8s.io"]
+  - apiGroups: ["extensions.agents.x-k8s.io"]
     resources: ["nodeinventories"]
     verbs: ["get", "list", "create", "update", "patch"]
 ---

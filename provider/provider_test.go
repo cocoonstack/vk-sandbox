@@ -24,120 +24,6 @@ import (
 // sandboxGVR is the owner CR resource this provider authorizes against.
 var sandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
 
-// fakeSandboxd implements SandboxdClient + Lister with call accounting.
-type fakeSandboxd struct {
-	mu       sync.Mutex
-	claims   int
-	releases []string
-	listErr  error
-	live     []ListedSandbox
-	claimErr error
-}
-
-func (f *fakeSandboxd) Claim(_ context.Context, _ sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.claimErr != nil {
-		return sandboxd.ClaimResult{}, f.claimErr
-	}
-	f.claims++
-	id := fmt.Sprintf("sb_%06d", f.claims)
-	f.live = append(f.live, ListedSandbox{ID: id})
-	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777"}, nil
-}
-
-func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.releases = append(f.releases, id)
-	return nil
-}
-
-func (f *fakeSandboxd) ListSandboxes(_ context.Context) ([]ListedSandbox, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	return append([]ListedSandbox(nil), f.live...), nil
-}
-
-func (f *fakeSandboxd) releaseCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.releases)
-}
-
-func (f *fakeSandboxd) claimCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.claims
-}
-
-// ownerSandbox builds the unstructured owner CR the fake dynamic client serves.
-func ownerSandbox(ns, name string, uid types.UID, deleting bool) *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetAPIVersion("agents.x-k8s.io/v1beta1")
-	u.SetKind("Sandbox")
-	u.SetNamespace(ns)
-	u.SetName(name)
-	u.SetUID(uid)
-	if deleting {
-		now := metav1.Now()
-		u.SetDeletionTimestamp(&now)
-		u.SetFinalizers([]string{"keep"})
-	}
-	return u
-}
-
-// dynWith returns a fake dynamic client. The recorded dead-end applies here
-// literally: seeding objects through the constructor naive-pluralizes the kind
-// (Sandbox → "sandboxs"), parking them under a GVR nobody queries, so Get sees
-// a structured NotFound and misreads the owner as deleted. Objects MUST be
-// seeded with Tracker().Create under the explicit GVR.
-func dynWith(t *testing.T, objs ...*unstructured.Unstructured) *dynamicfake.FakeDynamicClient {
-	t.Helper()
-	scheme := runtime.NewScheme()
-	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
-		map[schema.GroupVersionResource]string{sandboxGVR: "SandboxList"})
-	for _, o := range objs {
-		if err := dyn.Tracker().Create(sandboxGVR, o, o.GetNamespace()); err != nil {
-			t.Fatalf("seed %s/%s: %v", o.GetNamespace(), o.GetName(), err)
-		}
-	}
-	return dyn
-}
-
-func sandboxPod(ns, name string, uid types.UID, ownerName string, ownerUID types.UID) *corev1.Pod {
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: ns, Name: name, UID: uid,
-			Annotations: map[string]string{AnnTemplate: "base:24.04"},
-		},
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "img"}}},
-	}
-	if ownerName != "" {
-		pod.OwnerReferences = []metav1.OwnerReference{{
-			APIVersion: "agents.x-k8s.io/v1beta1", Kind: "Sandbox",
-			Name: ownerName, UID: ownerUID, Controller: ptr.To(true),
-		}}
-	}
-	return pod
-}
-
-func newTestProvider(t *testing.T, sd *fakeSandboxd, dyn *dynamicfake.FakeDynamicClient, statePath string) *Provider {
-	t.Helper()
-	cfg := Config{NodeName: "vk-test", Client: sd, Lister: sd, StatePath: statePath, Logger: logr.Discard()}
-	if dyn != nil {
-		cfg.Dynamic = dyn
-	}
-	p, err := New(cfg)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	return p
-}
-
 // TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
 // owner CR alive, pod deletion must NOT release the sandbox, and the same-key
 // replacement pod adopts the preserved claim without a second sandboxd claim.
@@ -386,4 +272,118 @@ func TestRuntimeMismatchRejected(t *testing.T) {
 	if sd.claimCount() != 0 {
 		t.Fatalf("mismatched pod must not claim; claims=%d", sd.claimCount())
 	}
+}
+
+// fakeSandboxd implements SandboxdClient + Lister with call accounting.
+type fakeSandboxd struct {
+	mu       sync.Mutex
+	claims   int
+	releases []string
+	listErr  error
+	live     []ListedSandbox
+	claimErr error
+}
+
+func (f *fakeSandboxd) Claim(_ context.Context, _ sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claimErr != nil {
+		return sandboxd.ClaimResult{}, f.claimErr
+	}
+	f.claims++
+	id := fmt.Sprintf("sb_%06d", f.claims)
+	f.live = append(f.live, ListedSandbox{ID: id})
+	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777"}, nil
+}
+
+func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.releases = append(f.releases, id)
+	return nil
+}
+
+func (f *fakeSandboxd) ListSandboxes(_ context.Context) ([]ListedSandbox, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	return append([]ListedSandbox(nil), f.live...), nil
+}
+
+func (f *fakeSandboxd) releaseCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.releases)
+}
+
+func (f *fakeSandboxd) claimCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.claims
+}
+
+// ownerSandbox builds the unstructured owner CR the fake dynamic client serves.
+func ownerSandbox(ns, name string, uid types.UID, deleting bool) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetAPIVersion("agents.x-k8s.io/v1beta1")
+	u.SetKind("Sandbox")
+	u.SetNamespace(ns)
+	u.SetName(name)
+	u.SetUID(uid)
+	if deleting {
+		now := metav1.Now()
+		u.SetDeletionTimestamp(&now)
+		u.SetFinalizers([]string{"keep"})
+	}
+	return u
+}
+
+// dynWith returns a fake dynamic client. The recorded dead-end applies here
+// literally: seeding objects through the constructor naive-pluralizes the kind
+// (Sandbox → "sandboxs"), parking them under a GVR nobody queries, so Get sees
+// a structured NotFound and misreads the owner as deleted. Objects MUST be
+// seeded with Tracker().Create under the explicit GVR.
+func dynWith(t *testing.T, objs ...*unstructured.Unstructured) *dynamicfake.FakeDynamicClient {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(scheme,
+		map[schema.GroupVersionResource]string{sandboxGVR: "SandboxList"})
+	for _, o := range objs {
+		if err := dyn.Tracker().Create(sandboxGVR, o, o.GetNamespace()); err != nil {
+			t.Fatalf("seed %s/%s: %v", o.GetNamespace(), o.GetName(), err)
+		}
+	}
+	return dyn
+}
+
+func sandboxPod(ns, name string, uid types.UID, ownerName string, ownerUID types.UID) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: ns, Name: name, UID: uid,
+			Annotations: map[string]string{AnnTemplate: "base:24.04"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "img"}}},
+	}
+	if ownerName != "" {
+		pod.OwnerReferences = []metav1.OwnerReference{{
+			APIVersion: "agents.x-k8s.io/v1beta1", Kind: "Sandbox",
+			Name: ownerName, UID: ownerUID, Controller: ptr.To(true), //nolint:modernize // new(bool) is false; this must be true
+		}}
+	}
+	return pod
+}
+
+func newTestProvider(t *testing.T, sd *fakeSandboxd, dyn *dynamicfake.FakeDynamicClient, statePath string) *Provider {
+	t.Helper()
+	cfg := Config{NodeName: "vk-test", Client: sd, Lister: sd, StatePath: statePath, Logger: logr.Discard()}
+	if dyn != nil {
+		cfg.Dynamic = dyn
+	}
+	p, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return p
 }

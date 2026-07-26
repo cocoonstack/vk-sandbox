@@ -11,6 +11,8 @@ import (
 	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -39,6 +41,7 @@ import (
 	"github.com/cocoonstack/vk-sandbox/inventory"
 	"github.com/cocoonstack/vk-sandbox/provider"
 	"github.com/cocoonstack/vk-sandbox/sandboxdx"
+	"github.com/cocoonstack/vk-sandbox/version"
 )
 
 // TaintKey marks the virtual node; the operator's runtime mutator adds the
@@ -63,8 +66,14 @@ func main() {
 		publishInventory = flag.Bool("publish-inventory", false, "server-side-apply this node's NodeInventory for the L3 aggregation layer")
 		publishInterval  = flag.Duration("publish-interval", 30*time.Second, "NodeInventory publish cadence")
 		podLabels        = flag.String("node-labels", "cocoon-sandbox.io/runtime=sandboxd", "comma-separated extra node labels key=value")
+		showVersion      = flag.Bool("version", false, "print build version and exit")
 	)
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("vk-sandbox %s (rev=%s built=%s)\n", version.VERSION, version.REVISION, version.BUILTAT)
+		return
+	}
 
 	logger := ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-sandbox")
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -73,7 +82,7 @@ func main() {
 	cfg, err := kubeConfig()
 	if err != nil {
 		logger.Error(err, "kubernetes client config")
-		os.Exit(1)
+		os.Exit(1) //nolint:gocritic // startup failure: the process dies before ctx matters
 	}
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -88,7 +97,7 @@ func main() {
 
 	token := ""
 	if *tokenFile != "" {
-		b, readErr := os.ReadFile(*tokenFile)
+		b, readErr := os.ReadFile(*tokenFile) //nolint:gosec // operator-supplied path
 		if readErr != nil {
 			logger.Error(readErr, "read sandboxd token file")
 			os.Exit(1)
@@ -133,9 +142,7 @@ func main() {
 				cfg.Node.Labels = map[string]string{}
 			}
 			cfg.Node.Labels["type"] = "virtual-kubelet"
-			for k, v := range parseLabels(*podLabels) {
-				cfg.Node.Labels[k] = v
-			}
+			maps.Copy(cfg.Node.Labels, parseLabels(*podLabels))
 			cfg.Node.Spec.Taints = append(cfg.Node.Spec.Taints, corev1.Taint{
 				Key:    TaintKey,
 				Value:  provider.RuntimeSandboxd,
@@ -230,7 +237,7 @@ func envOr(key, def string) string {
 
 func parseLabels(s string) map[string]string {
 	out := map[string]string{}
-	for _, kv := range strings.Split(s, ",") {
+	for kv := range strings.SplitSeq(s, ",") {
 		if k, v, ok := strings.Cut(strings.TrimSpace(kv), "="); ok && k != "" {
 			out[k] = v
 		}
@@ -248,7 +255,7 @@ func kubeConfig() (*rest.Config, error) {
 
 // fileReadable reports whether path exists and is a regular readable file.
 func fileReadable(path string) bool {
-	info, err := os.Stat(path)
+	info, err := os.Stat(path) //nolint:gosec // operator-supplied path
 	return err == nil && info.Mode().IsRegular()
 }
 
@@ -268,9 +275,12 @@ func listenPort(addr string) (int32, error) {
 	if err != nil {
 		return 0, err
 	}
-	port, err := strconv.Atoi(portStr)
+	port, err := strconv.ParseInt(portStr, 10, 32)
 	if err != nil {
 		return 0, err
+	}
+	if port < 1 || port > 65535 {
+		return 0, fmt.Errorf("port %d out of range", port)
 	}
 	return int32(port), nil
 }
