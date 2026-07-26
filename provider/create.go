@@ -63,7 +63,10 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return fmt.Errorf("pod %s requests runtime %q; this node serves %q", key, rt, RuntimeSandboxd)
 	}
 
-	// Adopt-in-place: an existing claim for this key survives pod churn.
+	// Adopt-in-place: an existing claim for this key survives pod churn. Its
+	// release credential is already durable — it was persisted when the sandbox
+	// was first claimed — so this save only refreshes which Pod holds it, and a
+	// failure costs nothing recoverable. That is why it stays log-only.
 	if c, ok := p.claimFor(key); ok {
 		p.mu.Lock()
 		c.PodUID = string(pod.UID)
