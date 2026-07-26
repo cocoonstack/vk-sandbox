@@ -2,7 +2,7 @@
 
 ## Overview
 
-vk-cocoon-sandbox uses a lightweight maintainer model, aligned with CNCF
+vk-sandbox uses a lightweight maintainer model, aligned with CNCF
 practice for early-stage projects. As the contributor base grows, this
 document is expected to grow with it.
 

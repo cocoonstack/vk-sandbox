@@ -21,7 +21,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
 
 // DeletePod applies the delete-authorization contract:

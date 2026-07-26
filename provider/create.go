@@ -22,15 +22,15 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale"
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
 
 // Pod-contract annotation keys. Template/net/size reuse the operator's
 // pkg/scale selector keys verbatim so one contract spans the L2 gateway and
 // this provider; the rest are provider-local.
 const (
-	// AnnRuntime routes a pod to this provider. cocoon-sandbox-operator's
+	// AnnRuntime routes a pod to this provider. sandbox-operator's
 	// runtime mutator sets it on sandbox pods destined for sandboxd nodes.
 	AnnRuntime = "sandbox.cocoonstack.io/runtime"
 	// RuntimeSandboxd is the AnnRuntime value this provider serves.

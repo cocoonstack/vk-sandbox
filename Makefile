@@ -7,10 +7,10 @@ export GOTOOLCHAIN
 all: fmt-check vet test build
 
 build:
-	$(GO) build -o bin/vk-cocoon-sandbox .
+	$(GO) build -o bin/vk-sandbox .
 
 build-linux:
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -o bin/vk-cocoon-sandbox-linux-amd64 .
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build -o bin/vk-sandbox-linux-amd64 .
 
 test:
 	$(GO) test ./...

@@ -30,9 +30,9 @@ import (
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 
-	"github.com/cocoonstack/vk-cocoon-sandbox/provider"
+	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
 // ClaimSnapshotter exposes the provider's pod-key → claim view.

@@ -21,7 +21,7 @@ import (
 	"io"
 	"net/http"
 
-	extv1beta1 "github.com/cocoonstack/cocoon-sandbox-operator/extensions/api/v1beta1"
+	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
 )
 
 // infoResponse is the subset of GET /v1/info this client reads: the node's warm

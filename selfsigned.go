@@ -46,7 +46,7 @@ func selfSignedCert(hosts ...string) (tls.Certificate, error) {
 	}
 	tmpl := x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: "vk-cocoon-sandbox"},
+		Subject:               pkix.Name{CommonName: "vk-sandbox"},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
 		KeyUsage:              x509.KeyUsageDigitalSignature,

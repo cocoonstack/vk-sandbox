@@ -1,8 +1,8 @@
-# vk-cocoon-sandbox
+# vk-sandbox
 
 A [virtual-kubelet](https://github.com/virtual-kubelet/virtual-kubelet) that
 serves Kubernetes **agent-sandbox semantics** (`agents.x-k8s.io`, driven by
-[cocoon-sandbox-operator](https://github.com/cocoonstack/cocoon-sandbox-operator))
+[sandbox-operator](https://github.com/cocoonstack/sandbox-operator))
 from [**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
 hot-sandbox daemon that hands over an already-running microVM in **0.2–0.7 ms**.
 
@@ -13,8 +13,8 @@ policy plane, the claim transaction runs on the node:
 ```mermaid
 flowchart LR
     K["kubectl / any K8s SDK<br/>(Sandbox / SandboxClaim / WarmPool CRs)"]
-    OP["cocoon-sandbox-operator<br/>L1 claim fast-path · warm pools · admission<br/>L3 aggregated apiserver"]
-    VK["vk-cocoon-sandbox (this repo)<br/>one virtual node per sandboxd"]
+    OP["sandbox-operator<br/>L1 claim fast-path · warm pools · admission<br/>L3 aggregated apiserver"]
+    VK["vk-sandbox (this repo)<br/>one virtual node per sandboxd"]
     SD["sandboxd<br/>node-local hot pool, sub-ms claims"]
     K --> OP --> VK --> SD
 ```
@@ -75,11 +75,11 @@ per-sandbox etcd objects.
 ## Run
 
 ```bash
-vk-cocoon-sandbox \
+vk-sandbox \
   --node-name vk-sandboxd-node1 \
   --sandboxd-url http://127.0.0.1:7777 \
   --sandboxd-token-file /etc/sandboxd/api-token \
-  --state-path /var/lib/vk-cocoon-sandbox/claims.json \
+  --state-path /var/lib/vk-sandbox/claims.json \
   --publish-inventory
 ```
 

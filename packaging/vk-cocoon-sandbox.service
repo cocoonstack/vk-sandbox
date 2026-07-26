@@ -1,23 +1,23 @@
 [Unit]
-Description=vk-cocoon-sandbox (sandboxd virtual-kubelet)
-Documentation=https://github.com/cocoonstack/vk-cocoon-sandbox
+Description=vk-sandbox (sandboxd virtual-kubelet)
+Documentation=https://github.com/cocoonstack/vk-sandbox
 Wants=network-online.target sandboxd.service
 After=network-online.target sandboxd.service
 # The sandboxd data plane must be up; the kubeconfig identifies the node.
 ConditionPathExists=/etc/cocoon/kubeconfig
-ConditionPathExists=/etc/vk-cocoon-sandbox/env
+ConditionPathExists=/etc/vk-sandbox/env
 
 [Service]
 Type=simple
 User=root
 Group=root
-WorkingDirectory=/var/lib/vk-cocoon-sandbox
+WorkingDirectory=/var/lib/vk-sandbox
 Environment=KUBECONFIG=/etc/cocoon/kubeconfig
 # Reuse the co-located vk-cocoon kubelet TLS material (optional).
 Environment=VK_TLS_CERT=/etc/cocoon/vk/tls/vk-kubelet.crt
 Environment=VK_TLS_KEY=/etc/cocoon/vk/tls/vk-kubelet.key
-EnvironmentFile=/etc/vk-cocoon-sandbox/env
-ExecStart=/usr/local/bin/vk-cocoon-sandbox
+EnvironmentFile=/etc/vk-sandbox/env
+ExecStart=/usr/local/bin/vk-sandbox
 # This provider never owns local VM child processes (sandboxd does), but keep
 # process kill-mode for parity and so a restart never signals sandboxd's tree.
 KillMode=process

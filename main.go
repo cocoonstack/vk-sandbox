@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// vk-cocoon-sandbox is a virtual-kubelet that serves Kubernetes agent-sandbox
-// semantics (agents.x-k8s.io, driven by cocoon-sandbox-operator) from sandboxd,
+// vk-sandbox is a virtual-kubelet that serves Kubernetes agent-sandbox
+// semantics (agents.x-k8s.io, driven by sandbox-operator) from sandboxd,
 // the node-local hot-sandbox daemon of github.com/cocoonstack/sandbox. One
 // virtual node fronts one sandboxd: a sandbox Pod scheduled here becomes a
 // sub-millisecond warm claim, pod deletion never destroys a VM without owner
@@ -47,12 +47,12 @@ import (
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
 
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale"
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 
-	"github.com/cocoonstack/vk-cocoon-sandbox/inventory"
-	"github.com/cocoonstack/vk-cocoon-sandbox/provider"
-	"github.com/cocoonstack/vk-cocoon-sandbox/sandboxdx"
+	"github.com/cocoonstack/vk-sandbox/inventory"
+	"github.com/cocoonstack/vk-sandbox/provider"
+	"github.com/cocoonstack/vk-sandbox/sandboxdx"
 )
 
 // TaintKey marks the virtual node; the operator's runtime mutator adds the
@@ -72,7 +72,7 @@ func main() {
 		sandboxdURL      = flag.String("sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
 		sandboxdAddr     = flag.String("sandboxd-advertise-addr", envOr("SANDBOXD_ADVERTISE_ADDR", ""), "sandboxd advertise address (host:port) published in NodeInventory for claim routing; defaults to the host:port of --sandboxd-url")
 		tokenFile        = flag.String("sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
-		statePath        = flag.String("state-path", envOr("VK_STATE_PATH", "/var/lib/vk-cocoon-sandbox/claims.json"), "claims table persistence path")
+		statePath        = flag.String("state-path", envOr("VK_STATE_PATH", "/var/lib/vk-sandbox/claims.json"), "claims table persistence path")
 		orphanInterval   = flag.Duration("orphan-scan-interval", 60*time.Second, "audit-only orphan scan cadence (0 disables)")
 		publishInventory = flag.Bool("publish-inventory", false, "server-side-apply this node's NodeInventory for the L3 aggregation layer")
 		publishInterval  = flag.Duration("publish-interval", 30*time.Second, "NodeInventory publish cadence")
@@ -80,7 +80,7 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-cocoon-sandbox")
+	logger := ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-sandbox")
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -223,7 +223,7 @@ func main() {
 		src := inventory.NewLiveSource(p, lister)
 		infoSrc := inventory.NewNodeInfoSource(advertiseAddr, lister)
 		pub := inventory.NewPublisher(*nodeName, src, infoSrc,
-			scale.NewSSAInventoryApplier(cclient, "vk-cocoon-sandbox"), logger.WithName("inventory"))
+			scale.NewSSAInventoryApplier(cclient, "vk-sandbox"), logger.WithName("inventory"))
 		go pub.PublishPeriodically(ctx, *publishInterval)
 	}
 
@@ -232,7 +232,7 @@ func main() {
 		logger.Error(err, "virtual-kubelet node exited")
 		os.Exit(1)
 	}
-	logger.Info("vk-cocoon-sandbox exiting")
+	logger.Info("vk-sandbox exiting")
 }
 
 func envOr(key, def string) string {

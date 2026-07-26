@@ -1,9 +1,9 @@
-module github.com/cocoonstack/vk-cocoon-sandbox
+module github.com/cocoonstack/vk-sandbox
 
 go 1.26.5
 
 require (
-	github.com/cocoonstack/cocoon-sandbox-operator v0.0.0-20260719080211-898a199e301c
+	github.com/cocoonstack/sandbox-operator v0.0.0-20260726160753-0c71cfef8125
 	github.com/go-logr/logr v1.4.3
 	github.com/prometheus/client_model v0.6.2
 	github.com/virtual-kubelet/virtual-kubelet v1.13.0
@@ -121,5 +121,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.3.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/cocoonstack/cocoon-sandbox-operator => ../cocoon-sandbox-operator

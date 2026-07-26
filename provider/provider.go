@@ -14,7 +14,7 @@
 
 // Package provider implements the virtual-kubelet provider that bridges
 // Kubernetes agent-sandbox semantics (agents.x-k8s.io, driven by
-// cocoon-sandbox-operator) onto sandboxd — the node-local hot-sandbox daemon
+// sandbox-operator) onto sandboxd — the node-local hot-sandbox daemon
 // from github.com/cocoonstack/sandbox that hands over an already-running
 // microVM in 0.2–0.7 ms.
 //
@@ -38,11 +38,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
 
 // SandboxdClient is the subset of the sandboxd API this provider drives.
-// *sandboxd.Client (from cocoon-sandbox-operator) satisfies Claim/Release;
+// *sandboxd.Client (from sandbox-operator) satisfies Claim/Release;
 // Lister adds the operator-index read used by status and the audit-only
 // orphan scan.
 type SandboxdClient interface {

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for your interest in improving vk-cocoon-sandbox!
+Thanks for your interest in improving vk-sandbox!
 
 ## Before you start
 

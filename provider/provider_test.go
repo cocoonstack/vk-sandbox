@@ -32,7 +32,7 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/utils/ptr"
 
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
 
 // sandboxGVR is the owner CR resource this provider authorizes against.

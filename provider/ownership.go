@@ -92,7 +92,7 @@ const (
 //   - Pod deletion alone is NEVER VM authority. Node-NotReady taint evictions
 //     delete every pod on a node while the sandboxes keep serving users.
 //   - Release is authorized only when the pod's controller owner CR (the
-//     agents.x-k8s.io Sandbox created by cocoon-sandbox-operator) is confirmed
+//     agents.x-k8s.io Sandbox created by sandbox-operator) is confirmed
 //     gone — a structured NotFound naming the owner in Details.Name — or is in
 //     teardown (non-zero deletionTimestamp).
 //   - An endpoint-level 404 without Details.Name means the GVR guess was wrong,

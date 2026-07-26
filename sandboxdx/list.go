@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package sandboxdx extends the cocoon-sandbox-operator sandboxd client with the
+// Package sandboxdx extends the sandbox-operator sandboxd client with the
 // root-token operator surfaces this provider needs: the live index (GET
 // /v1/sandboxes) for status and the audit-only orphan scan, and warm-pool
 // capacity (GET /v1/info) for NodeInventory publishing. Claim and Release stay on
@@ -27,7 +27,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cocoonstack/vk-cocoon-sandbox/provider"
+	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
 // ListClient reads the sandboxd operator index.

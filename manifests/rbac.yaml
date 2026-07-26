@@ -1,16 +1,16 @@
-# RBAC for vk-cocoon-sandbox: the virtual-kubelet node itself plus the
+# RBAC for vk-sandbox: the virtual-kubelet node itself plus the
 # destroy-authorization read (get sandboxes.agents.x-k8s.io) and, when
 # --publish-inventory is on, server-side-apply of NodeInventory objects.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: vk-cocoon-sandbox
+  name: vk-sandbox
   namespace: cocoon-sandbox-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: vk-cocoon-sandbox
+  name: vk-sandbox
 rules:
   - apiGroups: [""]
     resources: ["nodes"]
@@ -45,12 +45,12 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: vk-cocoon-sandbox
+  name: vk-sandbox
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: vk-cocoon-sandbox
+  name: vk-sandbox
 subjects:
   - kind: ServiceAccount
-    name: vk-cocoon-sandbox
+    name: vk-sandbox
     namespace: cocoon-sandbox-system

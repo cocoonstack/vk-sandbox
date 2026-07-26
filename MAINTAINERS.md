@@ -1,6 +1,6 @@
 # Maintainers
 
-The current maintainers of vk-cocoon-sandbox:
+The current maintainers of vk-sandbox:
 
 | Name | Contact | Scope |
 |---|---|---|

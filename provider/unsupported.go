@@ -27,7 +27,7 @@ import (
 // ErrNotImplemented marks kubelet surfaces this provider does not serve yet.
 // Interactive access to a sandbox goes through the sandbox SDK / preview URLs
 // (see the cocoonstack/sandbox docs), not the kubelet exec path.
-var ErrNotImplemented = errors.New("vk-cocoon-sandbox: not implemented; use the sandbox SDK for interactive access")
+var ErrNotImplemented = errors.New("vk-sandbox: not implemented; use the sandbox SDK for interactive access")
 
 // GetContainerLogs is not served; sandbox output lives inside the microVM.
 func (p *Provider) GetContainerLogs(context.Context, string, string, string, api.ContainerLogOpts) (io.ReadCloser, error) {

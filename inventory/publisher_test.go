@@ -20,10 +20,10 @@ import (
 
 	"github.com/go-logr/logr"
 
-	extv1beta1 "github.com/cocoonstack/cocoon-sandbox-operator/extensions/api/v1beta1"
-	"github.com/cocoonstack/cocoon-sandbox-operator/pkg/scale"
+	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 
-	"github.com/cocoonstack/vk-cocoon-sandbox/provider"
+	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
 type staticClaims map[string]provider.Claim
