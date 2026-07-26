@@ -127,6 +127,12 @@ type options struct {
 }
 
 func (o *options) run() error {
+	// Empty disables persistence, which is a test-only shape: a node serving real
+	// Pods without a durable claims table leaks a microVM per claim on restart.
+	if o.statePath == "" {
+		return fmt.Errorf("--state-path is required: without it no release credential survives a restart")
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 

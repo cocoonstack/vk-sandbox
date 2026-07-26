@@ -35,7 +35,9 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 	key := podKey(namespace, name)
 	p.mu.RLock()
 	pod := p.pods[key]
+	_, pending := p.tentative[key]
 	c, hasClaim := p.claims[key]
+	hasClaim = hasClaim && !pending
 	p.mu.RUnlock()
 	if pod == nil {
 		return nil, nil

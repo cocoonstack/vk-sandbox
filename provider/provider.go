@@ -105,6 +105,12 @@ type Provider struct {
 	claims   map[string]Claim       // key -> sandboxd claim
 	notifier func(*corev1.Pod)
 
+	// tentative holds pod keys whose claim has not been durably written yet. Such
+	// a claim is invisible to persist — otherwise a concurrent create's snapshot
+	// would make it durable, and a later rollback could not take it back — and it
+	// never reports Running, because its release credential may not survive.
+	tentative map[string]struct{}
+
 	// saveMu orders snapshot-to-rename as one step. Without it concurrent pod
 	// creates can rename an older snapshot last, dropping a release credential
 	// and leaking its microVM until sandboxd's TTL reaps it.
@@ -122,6 +128,7 @@ func New(cfg Config) (*Provider, error) {
 		log:       cfg.Logger,
 		pods:      map[string]*corev1.Pod{},
 		claims:    map[string]Claim{},
+		tentative: map[string]struct{}{},
 	}
 	if err := p.loadState(); err != nil {
 		return nil, err
@@ -154,10 +161,15 @@ func (p *Provider) notify(pod *corev1.Pod) {
 	}
 }
 
-// claimFor returns the claim bound to key.
+// claimFor returns the durable claim bound to key. A claim whose credential is
+// not on disk yet is not returned: it can still be rolled back, so nothing may
+// report it Running or adopt it.
 func (p *Provider) claimFor(key string) (Claim, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	if _, pending := p.tentative[key]; pending {
+		return Claim{}, false
+	}
 	c, ok := p.claims[key]
 	return c, ok
 }
@@ -235,6 +247,25 @@ func (p *Provider) saveState() {
 	}
 }
 
+// commitClaim makes a tentative claim durable. The key leaves the tentative set
+// first so this write includes it; a failure puts it back, keeping the claim
+// invisible to Running and to adoption until the caller rolls it back.
+func (p *Provider) commitClaim(key string) error {
+	p.mu.Lock()
+	delete(p.tentative, key)
+	p.mu.Unlock()
+
+	if err := p.persist(); err != nil {
+		p.mu.Lock()
+		if _, stillClaimed := p.claims[key]; stillClaimed {
+			p.tentative[key] = struct{}{}
+		}
+		p.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
 // persist atomically writes the claims table. Callers hold no lock.
 func (p *Provider) persist() error {
 	if p.statePath == "" {
@@ -245,7 +276,11 @@ func (p *Provider) persist() error {
 
 	p.mu.RLock()
 	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
-	maps.Copy(st.Claims, p.claims)
+	for k, c := range p.claims {
+		if _, pending := p.tentative[k]; !pending {
+			st.Claims[k] = c
+		}
+	}
 	p.mu.RUnlock()
 	b, err := json.Marshal(st)
 	if err != nil {

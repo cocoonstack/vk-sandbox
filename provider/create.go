@@ -109,12 +109,15 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	p.mu.Lock()
 	p.claims[key] = c
 	p.pods[key] = pod.DeepCopy()
+	// Tentative until its own write lands: a concurrent create's snapshot must
+	// not make this claim durable, or the rollback below could not take it back.
+	p.tentative[key] = struct{}{}
 	p.mu.Unlock()
 
 	// Nothing has told Kubernetes this Pod is running yet, so a claim whose
 	// release credential could not be stored is still undoable — and must be
 	// undone, or the microVM leaks with no way to reach it after a restart.
-	if err := p.persist(); err != nil {
+	if err := p.commitClaim(key); err != nil {
 		return p.undoUnpersistedClaim(key, c, err)
 	}
 
@@ -146,6 +149,7 @@ func (p *Provider) undoUnpersistedClaim(key string, c Claim, persistErr error) e
 		delete(p.claims, key)
 		delete(p.pods, key)
 	}
+	delete(p.tentative, key)
 	p.mu.Unlock()
 	p.log.Info("returned sandbox after its claim could not be persisted", "pod", key, "claim", c.ID)
 	return fmt.Errorf("persist claim for %s: %w", key, persistErr)

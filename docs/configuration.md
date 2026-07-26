@@ -20,7 +20,7 @@ environment.
 | `--sandboxd-url` | `SANDBOXD_URL` | `http://127.0.0.1:7777` | sandboxd base URL |
 | `--sandboxd-advertise-addr` | `SANDBOXD_ADVERTISE_ADDR` | host:port of `--sandboxd-url` | `host:port` published in `NodeInventory` for claim routing |
 | `--sandboxd-token-file` | `SANDBOXD_TOKEN_FILE` | none | File holding the sandboxd node API token (trailing whitespace trimmed) |
-| `--state-path` | `VK_STATE_PATH` | `/var/lib/vk-sandbox/claims.json` | Claims table persistence path; empty disables persistence |
+| `--state-path` | `VK_STATE_PATH` | `/var/lib/vk-sandbox/claims.json` | Claims table persistence path. Required: the binary refuses to start without one, because a node serving real Pods would leak a microVM per claim on restart |
 | `--orphan-scan-interval` | -- | `60s` | Audit-only orphan scan cadence; `0` disables the scan |
 | `--publish-inventory` | -- | `false` | Server-side-apply this node's `NodeInventory` for the L3 aggregation layer |
 | `--publish-interval` | -- | `30s` | `NodeInventory` publish cadence |

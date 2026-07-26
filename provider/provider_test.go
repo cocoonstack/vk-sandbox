@@ -25,7 +25,11 @@ import (
 )
 
 // sandboxGVR is the owner CR resource this provider authorizes against.
-var sandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
+var (
+	sandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
+
+	errTestReleaseFailed = errors.New("sandboxd unreachable")
+)
 
 // TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
 // owner CR alive, pod deletion must NOT release the sandbox, and the same-key
@@ -541,7 +545,7 @@ func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
 
 func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
 	dir := t.TempDir()
-	sd := &fakeSandboxd{releaseErr: errors.New("sandboxd unreachable")}
+	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
 	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -555,9 +559,69 @@ func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
 		t.Fatal("CreatePod reported success")
 	}
 	// The credential is the only way to reach that sandbox; dropping it would
-	// strand the microVM until sandboxd's TTL.
-	if _, ok := p.claimFor("ns/p"); !ok {
+	// strand the microVM until sandboxd's TTL. It stays tentative, so it is not
+	// reachable through claimFor and cannot be reported Running or adopted.
+	p.mu.RLock()
+	_, held := p.claims["ns/p"]
+	_, pending := p.tentative["ns/p"]
+	p.mu.RUnlock()
+	if !held {
 		t.Error("the release credential was discarded even though the sandbox is still claimed")
+	}
+	if !pending {
+		t.Error("a claim that never reached disk must stay tentative")
+	}
+	if _, ok := p.claimFor("ns/p"); ok {
+		t.Error("a tentative claim must not be visible to Running or adoption")
+	}
+}
+
+func TestATentativeClaimIsNeverReportedRunning(t *testing.T) {
+	dir := t.TempDir()
+	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	// persist fails, then the compensating release fails too, so the claim is
+	// kept in memory for a later DeletePod — but it is not durable.
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err == nil {
+		t.Fatal("CreatePod reported success")
+	}
+
+	st, err := p.GetPodStatus(t.Context(), "ns", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st != nil && st.Phase == corev1.PodRunning {
+		t.Fatal("a Pod whose release credential never reached disk was reported Running")
+	}
+}
+
+func TestATentativeClaimIsNotAdopted(t *testing.T) {
+	dir := t.TempDir()
+	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", ""))
+	before := sd.claims
+
+	// A replacement Pod must not adopt a claim that was never made durable.
+	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u2", "", ""))
+	if sd.claims == before {
+		t.Fatal("the replacement adopted a tentative claim instead of claiming afresh")
 	}
 }
 
