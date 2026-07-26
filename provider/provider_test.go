@@ -426,6 +426,72 @@ func TestSaveStateRecreatesADeletedStateDir(t *testing.T) {
 	}
 }
 
+func TestLoadStateDoesNotRewriteAnAlreadyStampedTable(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	current := `{"claims":{"ns/p":{"id":"sb_1","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(current), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Config{StatePath: path, Logger: logr.Discard()}); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+		t.Fatalf("a table needing no backfill was rewritten on startup (%v -> %v)", before.ModTime(), after.ModTime())
+	}
+}
+
+func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
+	// runningStatus keeps a zero-value fallback; this pins the invariant that no
+	// production path actually needs it, so the reported start time is always the
+	// real claim time.
+	sd := &fakeSandboxd{}
+	p, err := New(Config{NodeName: "n", Client: sd, StatePath: t.TempDir() + "/c.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := sandboxPod("ns", "p", "u1", "", "")
+
+	if err := p.CreatePod(t.Context(), pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	fresh, _ := p.claimFor("ns/p")
+	if fresh.ClaimedAt.IsZero() {
+		t.Error("a fresh claim carries no ClaimedAt")
+	}
+
+	// Adopt-in-place: drop the pod entry, keep the claim, then recreate.
+	p.forgetPod("ns/p")
+	p.mu.Lock()
+	c := p.claims["ns/p"]
+	c.ClaimedAt = metav1.Time{}
+	p.claims["ns/p"] = c
+	p.mu.Unlock()
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u2", "", "")); err != nil {
+		t.Fatalf("adopt CreatePod: %v", err)
+	}
+	adopted, _ := p.claimFor("ns/p")
+	if adopted.ClaimedAt.IsZero() {
+		t.Error("an adopted claim carries no ClaimedAt")
+	}
+
+	st, err := p.GetPodStatus(t.Context(), "ns", "p")
+	if err != nil || st == nil {
+		t.Fatalf("GetPodStatus: %v", err)
+	}
+	if st.StartTime.IsZero() || st.Phase != corev1.PodRunning {
+		t.Errorf("status = %v / %v", st.Phase, st.StartTime)
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu       sync.Mutex
