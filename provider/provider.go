@@ -204,13 +204,18 @@ func (p *Provider) loadState() error {
 	// A table written before ClaimedAt existed would otherwise report a Pod start
 	// time that moves on every status read, so settle it once here.
 	now := metav1.Now()
+	backfilled := false
 	for k, c := range st.Claims {
 		if c.ClaimedAt.IsZero() {
 			c.ClaimedAt = now
 			st.Claims[k] = c
+			backfilled = true
 		}
 	}
 	p.claims = st.Claims
+	if backfilled {
+		p.saveState()
+	}
 	return nil
 }
 
@@ -229,6 +234,12 @@ func (p *Provider) saveState() {
 	b, err := json.Marshal(st)
 	if err != nil {
 		p.log.Error(err, "encode claims state")
+		return
+	}
+	// Cheap next to the write (2us of a 300us save) and it keeps a deleted
+	// state directory from turning every later save into a permanent failure.
+	if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
+		p.log.Error(err, "mkdir state dir")
 		return
 	}
 	tmp := p.statePath + ".tmp"

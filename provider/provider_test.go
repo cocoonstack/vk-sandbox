@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -370,6 +371,58 @@ func TestStartTimeIsStableForAClaimTableFromAnOlderBuild(t *testing.T) {
 	second, _ := p.GetPodStatus(t.Context(), "ns", "p")
 	if !first.StartTime.Equal(second.StartTime) {
 		t.Fatalf("StartTime still moves after loading a pre-ClaimedAt table: %v then %v", first.StartTime, second.StartTime)
+	}
+}
+
+func TestClaimedAtBackfillIsPersisted(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	old := `{"claims":{"ns/p":{"id":"sb_1","token":"t","podUID":"u"}}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(Config{StatePath: path, Logger: logr.Discard()}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without persistence the next restart backfills a NEW timestamp, so the
+	// reported start time would jump on every restart.
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "claimedAt") {
+		t.Fatalf("backfill was not written back: %s", b)
+	}
+
+	first, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := first.claimFor("ns/p")
+	c, _ := second.claimFor("ns/p")
+	if !a.ClaimedAt.Equal(&c.ClaimedAt) {
+		t.Fatalf("ClaimedAt changed across restarts: %v then %v", a.ClaimedAt, c.ClaimedAt)
+	}
+}
+
+func TestSaveStateRecreatesADeletedStateDir(t *testing.T) {
+	dir := t.TempDir() + "/nested"
+	p, err := New(Config{StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.claims["ns/p"] = Claim{ID: "sb_1", Token: "t"}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	p.saveState()
+
+	if _, err := os.Stat(dir + "/claims.json"); err != nil {
+		t.Fatalf("a deleted state dir permanently broke persistence: %v", err)
 	}
 }
 
