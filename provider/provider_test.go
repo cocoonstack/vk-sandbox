@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -294,6 +295,42 @@ func TestLoadStateReadsIndentedFileFromOlderBuild(t *testing.T) {
 	}
 	if got, ok := p.claimFor("ns/pod-1"); !ok || got.ID != "sb_1" || got.Token != "tok" {
 		t.Fatalf("indented state from an older build did not load: %+v ok=%v", got, ok)
+	}
+}
+
+func TestConcurrentSaveStateNeverLosesAClaim(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	// Each writer adds a claim and persists. Whichever save lands last must
+	// still describe every claim added before it, or a release credential is
+	// gone and its microVM leaks until sandboxd's TTL reaps it.
+	const writers = 32
+	var wg sync.WaitGroup
+	for w := range writers {
+		wg.Go(func() {
+			key := fmt.Sprintf("ns/pod-%d", w)
+			p.mu.Lock()
+			p.claims[key] = Claim{ID: fmt.Sprintf("sb_%d", w), Token: "tok", PodUID: "u"}
+			p.mu.Unlock()
+			p.saveState()
+		})
+	}
+	wg.Wait()
+
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	var st stateFile
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatalf("claims table is corrupt after concurrent saves: %v", err)
+	}
+	if len(st.Claims) != writers {
+		t.Fatalf("a stale snapshot overwrote a newer one: persisted %d claims, want %d", len(st.Claims), writers)
 	}
 }
 

@@ -91,6 +91,11 @@ type Provider struct {
 	pods     map[string]*corev1.Pod // key -> last accepted pod object
 	claims   map[string]Claim       // key -> sandboxd claim
 	notifier func(*corev1.Pod)
+
+	// saveMu orders snapshot-to-rename as one step. Without it concurrent pod
+	// creates can rename an older snapshot last, dropping a release credential
+	// and leaking its microVM until sandboxd's TTL reaps it.
+	saveMu sync.Mutex
 }
 
 // New builds a Provider and loads any persisted claims table.
@@ -199,6 +204,9 @@ func (p *Provider) saveState() {
 	if p.statePath == "" {
 		return
 	}
+	p.saveMu.Lock()
+	defer p.saveMu.Unlock()
+
 	p.mu.RLock()
 	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
 	maps.Copy(st.Claims, p.claims)
