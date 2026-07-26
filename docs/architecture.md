@@ -97,9 +97,11 @@ flag; only the in-process constructor accepts an empty path, for tests.
 A claim is durable before it counts: until its own write lands it is invisible
 to status and to adoption, and a create whose write fails returns the sandbox
 rather than reporting Running. At startup the reloaded table is checked against
-the node's live sandboxes and rows the node no longer holds are dropped — but a
-failed listing is not an empty list, so an unreadable sandboxd leaves the table
-untouched.
+the node's live sandboxes and rows the node no longer holds are dropped. A
+failed listing is not an empty list, so an unreadable sandboxd drops nothing —
+the rows are quarantined instead: still releasable, but not adoptable and not
+Running until a later listing vouches for them. The orphan scan's listing is
+what lifts the quarantine.
 
 ## Audit-only orphan scan
 

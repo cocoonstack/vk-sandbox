@@ -111,6 +111,12 @@ type Provider struct {
 	// never reports Running, because its release credential may not survive.
 	tentative map[string]struct{}
 
+	// quarantined holds keys loaded from disk that no sandboxd listing has
+	// confirmed yet. A row left behind by a release whose save failed looks
+	// identical to a live one, so it may not be adopted or reported Running
+	// until the node vouches for it.
+	quarantined map[string]struct{}
+
 	// saveMu orders snapshot-to-rename as one step. Without it concurrent pod
 	// creates can rename an older snapshot last, dropping a release credential
 	// and leaking its microVM until sandboxd's TTL reaps it.
@@ -120,20 +126,25 @@ type Provider struct {
 // New builds a Provider and loads any persisted claims table.
 func New(cfg Config) (*Provider, error) {
 	p := &Provider{
-		nodeName:  cfg.NodeName,
-		client:    cfg.Client,
-		lister:    cfg.Lister,
-		dyn:       cfg.Dynamic,
-		statePath: cfg.StatePath,
-		log:       cfg.Logger,
-		pods:      map[string]*corev1.Pod{},
-		claims:    map[string]Claim{},
-		tentative: map[string]struct{}{},
+		nodeName:    cfg.NodeName,
+		client:      cfg.Client,
+		lister:      cfg.Lister,
+		dyn:         cfg.Dynamic,
+		statePath:   cfg.StatePath,
+		log:         cfg.Logger,
+		pods:        map[string]*corev1.Pod{},
+		claims:      map[string]Claim{},
+		tentative:   map[string]struct{}{},
+		quarantined: map[string]struct{}{},
 	}
 	if err := p.loadState(); err != nil {
 		return nil, err
 	}
-	p.dropClaimsTheNodeNoLongerHolds(context.Background())
+	// Without a lister nothing can ever vouch for the table, so quarantining
+	// would hide it forever; that shape is tests and the no-inventory path.
+	if p.lister != nil && !p.VerifyClaimsAgainstNode(context.Background()) {
+		p.quarantineLoadedClaims()
+	}
 	// Prove the claims table is writable before accepting any Pod. Running with an
 	// unwritable state path would persist no release credential, so every claim
 	// this process made would leak its microVM on restart. Failing here instead
@@ -169,6 +180,9 @@ func (p *Provider) claimFor(key string) (Claim, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	if _, pending := p.tentative[key]; pending {
+		return Claim{}, false
+	}
+	if _, unverified := p.quarantined[key]; unverified {
 		return Claim{}, false
 	}
 	c, ok := p.claims[key]
@@ -248,29 +262,53 @@ func (p *Provider) loadState() error {
 	return nil
 }
 
-// dropClaimsTheNodeNoLongerHolds removes rows for sandboxes this node does not
-// have. A release whose save failed leaves such a row behind, and reloading it
-// would let a same-key Pod adopt a destroyed sandbox and report it Running.
-// A failed listing is NOT an empty list — the 2026-05-15 rule — so the table is
-// left untouched when sandboxd cannot be read.
-func (p *Provider) dropClaimsTheNodeNoLongerHolds(ctx context.Context) {
-	if p.lister == nil || len(p.claims) == 0 {
-		return
+// VerifyClaimsAgainstNode reconciles the claims table with the sandboxes the
+// node actually holds: rows whose sandbox is gone are dropped, and the rest are
+// confirmed. A release whose save failed leaves such a row behind, and reloading
+// it would let a same-key Pod adopt a destroyed sandbox and report it Running.
+//
+// A failed listing is NOT an empty list — the 2026-05-15 rule — so nothing is
+// dropped when sandboxd cannot be read. Unverified rows stay quarantined
+// instead: still releasable, but invisible to adoption and to Running until a
+// listing confirms them. Reports whether the listing succeeded.
+func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
+	if p.lister == nil {
+		return false
 	}
 	listed, err := p.lister.ListSandboxes(ctx)
 	if err != nil {
-		p.log.Info("sandboxd list failed at startup; keeping the claims table as loaded", "err", err.Error())
-		return
+		p.log.Info("sandboxd list failed; claims stay unverified", "err", err.Error())
+		return false
 	}
 	live := make(map[string]struct{}, len(listed))
 	for _, s := range listed {
 		live[s.ID] = struct{}{}
 	}
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	for key, c := range p.claims {
-		if _, ok := live[c.ID]; !ok {
-			delete(p.claims, key)
-			p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", c.ID)
+		if _, ok := live[c.ID]; ok {
+			delete(p.quarantined, key)
+			continue
 		}
+		if _, pending := p.tentative[key]; pending {
+			continue // mid-create, not yet reported by sandboxd
+		}
+		delete(p.claims, key)
+		delete(p.quarantined, key)
+		p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", c.ID)
+	}
+	return true
+}
+
+// quarantineLoadedClaims marks every loaded row unverified, for the case where
+// startup could not reach sandboxd. The next successful listing clears them.
+func (p *Provider) quarantineLoadedClaims() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key := range p.claims {
+		p.quarantined[key] = struct{}{}
 	}
 }
 

@@ -743,6 +743,73 @@ func TestCommitWritesOnlyItsOwnTentativeClaim(t *testing.T) {
 	}
 }
 
+func TestAnUnverifiedClaimIsNotAdoptedOrReportedRunning(t *testing.T) {
+	// The sequence: an authorized release saved nothing (disk was down), the
+	// process restarted, and sandboxd could not be listed either. The stale row
+	// survives on purpose — a failed query is not an empty list — but nothing may
+	// treat it as a live sandbox until a listing vouches for it.
+	path := t.TempDir() + "/claims.json"
+	stale := `{"claims":{"ns/p":{"id":"sb_released","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := p.claimFor("ns/p"); ok {
+		t.Error("an unverified claim was offered for adoption")
+	}
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+	st, err := p.GetPodStatus(t.Context(), "ns", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st != nil && st.Phase == corev1.PodRunning {
+		t.Error("an unverified claim was reported Running")
+	}
+
+	// It is still releasable: the credential may be the only handle to a live VM.
+	if _, ok := p.heldClaimFor("ns/p"); !ok {
+		t.Error("an unverified claim must stay reachable for release")
+	}
+
+	// Once sandboxd answers and does not list it, the row goes away.
+	sd.listErr = nil
+	if !p.VerifyClaimsAgainstNode(t.Context()) {
+		t.Fatal("verification did not run")
+	}
+	if _, ok := p.heldClaimFor("ns/p"); ok {
+		t.Error("a released sandbox's row survived verification")
+	}
+}
+
+func TestVerificationClearsTheQuarantineForALiveSandbox(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	live := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(live), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := p.claimFor("ns/p"); ok {
+		t.Fatal("setup: expected the claim to start quarantined")
+	}
+
+	sd.listErr = nil
+	sd.live = []ListedSandbox{{ID: "sb_live"}}
+	p.VerifyClaimsAgainstNode(t.Context())
+
+	if _, ok := p.claimFor("ns/p"); !ok {
+		t.Error("a claim the node still holds stayed quarantined after a successful listing")
+	}
+}
+
 // fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu         sync.Mutex

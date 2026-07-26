@@ -65,6 +65,9 @@ func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			// Reconciling here is what lifts a startup quarantine: the same
+			// listing that finds orphans also vouches for the loaded claims.
+			p.VerifyClaimsAgainstNode(ctx)
 			p.OrphanScan(ctx)
 		}
 	}
