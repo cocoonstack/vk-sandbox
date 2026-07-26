@@ -907,6 +907,39 @@ func TestVerificationIgnoresAClaimMadeAfterItsListing(t *testing.T) {
 	}
 }
 
+func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
+	// After a restart the row is unverified. Once sandboxd vouches for it the
+	// create must adopt it immediately: waiting for the kubelet's next retry
+	// would leave the Pod pending for no reason.
+	path := t.TempDir() + "/claims.json"
+	loaded := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(loaded), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// sandboxd is reachable again and still holds the sandbox.
+	sd.mu.Lock()
+	sd.listErr = nil
+	sd.live = []ListedSandbox{{ID: "sb_prev"}}
+	sd.mu.Unlock()
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if sd.claims != 0 {
+		t.Errorf("a new sandbox was claimed instead of adopting the vouched-for one: claims=%d", sd.claims)
+	}
+	c, ok := p.claimFor("ns/p")
+	if !ok || c.ID != "sb_prev" {
+		t.Errorf("the vouched-for sandbox was not adopted: %+v ok=%v", c, ok)
+	}
+}
+
 // listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()

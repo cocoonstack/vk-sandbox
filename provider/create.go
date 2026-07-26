@@ -63,6 +63,13 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return fmt.Errorf("pod %s requests runtime %q; this node serves %q", key, rt, RuntimeSandboxd)
 	}
 
+	// An unverified row from a previous process may still be a live sandbox whose
+	// only credential is that row. Settle it before deciding anything, so a
+	// vouched-for sandbox is adopted on this pass rather than the next retry.
+	if err := p.resolveUnverifiedClaim(ctx, key); err != nil {
+		return err
+	}
+
 	// Adopt-in-place: an existing claim for this key survives pod churn. Its
 	// release credential is already durable — it was persisted when the sandbox
 	// was first claimed — so this save only refreshes which Pod holds it, and a
@@ -80,14 +87,6 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		p.log.Info("adopted preserved sandbox for replacement pod", "pod", key, "claim", c.ID)
 		p.pushRunning(pod, c)
 		return nil
-	}
-
-	// An unverified row from a previous process may still be a live sandbox whose
-	// only credential is that row. Resolve it before the key is reused: a listing
-	// either vouches for it — in which case the adoption above applies on the
-	// retry — or proves it gone.
-	if err := p.resolveUnverifiedClaim(ctx, key); err != nil {
-		return err
 	}
 
 	// A stranded claim from an earlier failed create still holds a live microVM
