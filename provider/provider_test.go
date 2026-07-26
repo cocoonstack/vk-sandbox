@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
@@ -331,6 +332,44 @@ func TestConcurrentSaveStateNeverLosesAClaim(t *testing.T) {
 	}
 	if len(st.Claims) != writers {
 		t.Fatalf("a stale snapshot overwrote a newer one: persisted %d claims, want %d", len(st.Claims), writers)
+	}
+}
+
+func TestGetPodStatusStartTimeIsStable(t *testing.T) {
+	p, err := New(Config{Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "p", UID: "u"}}
+	p.pods["ns/p"] = pod
+	p.claims["ns/p"] = Claim{ID: "sb_1", Token: "t", Address: "10.0.0.5:7777", ClaimedAt: metav1.Now()}
+
+	first, _ := p.GetPodStatus(t.Context(), "ns", "p")
+	time.Sleep(20 * time.Millisecond)
+	second, _ := p.GetPodStatus(t.Context(), "ns", "p")
+
+	if !first.StartTime.Equal(second.StartTime) {
+		t.Fatalf("StartTime moves between reads: %v then %v", first.StartTime, second.StartTime)
+	}
+}
+
+func TestStartTimeIsStableForAClaimTableFromAnOlderBuild(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	old := `{"claims":{"ns/p":{"id":"sb_1","token":"t","address":"10.0.0.5:7777","podUID":"u"}}}`
+	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.pods["ns/p"] = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "p", UID: "u"}}
+
+	first, _ := p.GetPodStatus(t.Context(), "ns", "p")
+	time.Sleep(20 * time.Millisecond)
+	second, _ := p.GetPodStatus(t.Context(), "ns", "p")
+	if !first.StartTime.Equal(second.StartTime) {
+		t.Fatalf("StartTime still moves after loading a pre-ClaimedAt table: %v then %v", first.StartTime, second.StartTime)
 	}
 }
 

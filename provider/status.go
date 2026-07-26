@@ -53,12 +53,15 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 // sandbox VM address as the pod IP and one synthetic ready container per spec
 // container (the workload runs inside the microVM, not as containers).
 func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
-	now := metav1.Now()
+	started := c.ClaimedAt
+	if started.IsZero() {
+		started = metav1.Now()
+	}
 	ip := claimIP(c.Address)
 	st := corev1.PodStatus{
 		Phase:     corev1.PodRunning,
 		HostIP:    ip,
-		StartTime: &now,
+		StartTime: &started,
 		Conditions: []corev1.PodCondition{
 			{Type: corev1.PodInitialized, Status: corev1.ConditionTrue},
 			{Type: corev1.PodReady, Status: corev1.ConditionTrue},
@@ -74,7 +77,7 @@ func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 			Name:  ctr.Name,
 			Ready: true,
 			State: corev1.ContainerState{
-				Running: &corev1.ContainerStateRunning{StartedAt: now},
+				Running: &corev1.ContainerStateRunning{StartedAt: started},
 			},
 			Image:   ctr.Image,
 			ImageID: "sandboxd://" + c.ID,

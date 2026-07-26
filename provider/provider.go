@@ -23,6 +23,7 @@ import (
 
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
@@ -62,6 +63,10 @@ type Claim struct {
 	Token   string `json:"token"`
 	Address string `json:"address,omitempty"`
 	PodUID  string `json:"podUID"`
+	// ClaimedAt is when this claim was taken. Status reads report it as the Pod
+	// start time, which must not move between reads; a table written by an older
+	// build has none, so the first read after upgrade settles it.
+	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
 }
 
 // Config assembles a Provider.
@@ -193,9 +198,19 @@ func (p *Provider) loadState() error {
 	if err := json.Unmarshal(b, &st); err != nil {
 		return fmt.Errorf("decode state %s: %w", p.statePath, err)
 	}
-	if st.Claims != nil {
-		p.claims = st.Claims
+	if st.Claims == nil {
+		return nil
 	}
+	// A table written before ClaimedAt existed would otherwise report a Pod start
+	// time that moves on every status read, so settle it once here.
+	now := metav1.Now()
+	for k, c := range st.Claims {
+		if c.ClaimedAt.IsZero() {
+			c.ClaimedAt = now
+			st.Claims[k] = c
+		}
+	}
+	p.claims = st.Claims
 	return nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
@@ -65,6 +66,9 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	if c, ok := p.claimFor(key); ok {
 		p.mu.Lock()
 		c.PodUID = string(pod.UID)
+		if c.ClaimedAt.IsZero() {
+			c.ClaimedAt = metav1.Now()
+		}
 		p.claims[key] = c
 		p.pods[key] = pod.DeepCopy()
 		p.mu.Unlock()
@@ -97,7 +101,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return fmt.Errorf("claim sandbox for %s (template %s): %w", key, spec.Template, err)
 	}
 
-	c := Claim{ID: res.ID, Token: res.Token, Address: res.OwnerAddr, PodUID: string(pod.UID)}
+	c := Claim{ID: res.ID, Token: res.Token, Address: res.OwnerAddr, PodUID: string(pod.UID), ClaimedAt: metav1.Now()}
 	p.mu.Lock()
 	p.claims[key] = c
 	p.pods[key] = pod.DeepCopy()
