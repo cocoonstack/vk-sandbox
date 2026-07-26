@@ -32,6 +32,7 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/go-logr/logr"
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
 
@@ -84,35 +85,68 @@ func main() {
 	}
 
 	logger := ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-sandbox")
+	o := &options{
+		nodeName: *nodeName, nodeIP: *nodeIP, listenAddr: *listenAddr,
+		tlsCert: *tlsCert, tlsKey: *tlsKey,
+		nodeCPU: *nodeCPU, nodeMem: *nodeMem, nodePods: *nodePods,
+		sandboxdURL: *sandboxdURL, sandboxdAddr: *sandboxdAddr, tokenFile: *tokenFile,
+		statePath: *statePath, podLabels: *podLabels,
+		orphanInterval: *orphanInterval, publishInterval: *publishInterval,
+		publishInventory: *publishInventory,
+		log:              logger,
+	}
+	if err := o.run(); err != nil {
+		logger.Error(err, "vk-sandbox exited")
+		os.Exit(1)
+	}
+	logger.Info("vk-sandbox exiting")
+}
+
+// options is the resolved flag set, so run reads as a sequence of named steps
+// rather than a 190-line body threading pointers.
+type options struct {
+	nodeName     string
+	nodeIP       string
+	listenAddr   string
+	tlsCert      string
+	tlsKey       string
+	nodeCPU      string
+	nodeMem      string
+	nodePods     string
+	sandboxdURL  string
+	sandboxdAddr string
+	tokenFile    string
+	statePath    string
+	podLabels    string
+
+	orphanInterval   time.Duration
+	publishInterval  time.Duration
+	publishInventory bool
+
+	log logr.Logger
+}
+
+func (o *options) run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	cfg, err := kubeConfig()
 	if err != nil {
-		logger.Error(err, "kubernetes client config")
-		os.Exit(1) //nolint:gocritic // startup failure: the process dies before ctx matters
+		return fmt.Errorf("kubernetes client config: %w", err)
 	}
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
-		logger.Error(err, "kubernetes clientset")
-		os.Exit(1)
+		return fmt.Errorf("kubernetes clientset: %w", err)
 	}
 	dyn, err := dynamic.NewForConfig(cfg)
 	if err != nil {
-		logger.Error(err, "dynamic client")
-		os.Exit(1)
+		return fmt.Errorf("dynamic client: %w", err)
 	}
 
-	token := ""
-	if *tokenFile != "" {
-		b, readErr := os.ReadFile(*tokenFile) //nolint:gosec // operator-supplied path
-		if readErr != nil {
-			logger.Error(readErr, "read sandboxd token file")
-			os.Exit(1)
-		}
-		token = strings.TrimSpace(string(b))
+	token, err := o.sandboxdToken()
+	if err != nil {
+		return err
 	}
-
 	// One pooled client for the claim path. A bare &http.Client{} falls back to
 	// http.DefaultTransport, whose MaxIdleConnsPerHost of 2 forces a fresh
 	// handshake on every concurrent pod create past the second, and has no
@@ -125,127 +159,152 @@ func main() {
 			IdleConnTimeout:     sandboxdIdleConnTimeout,
 		},
 	}
-	sdClient := sandboxd.New(*sandboxdURL, token, sandboxd.WithHTTPClient(hc))
-	lister := sandboxdx.NewListClient(*sandboxdURL, token, sandboxdRequestTimeout)
+	sdClient := sandboxd.New(o.sandboxdURL, token, sandboxd.WithHTTPClient(hc))
+	lister := sandboxdx.NewListClient(o.sandboxdURL, token, sandboxdRequestTimeout)
 
 	p, err := provider.New(provider.Config{
-		NodeName:  *nodeName,
+		NodeName:  o.nodeName,
 		Client:    sdClient,
 		Lister:    lister,
 		Dynamic:   dyn,
-		StatePath: *statePath,
-		Logger:    logger.WithName("provider"),
+		StatePath: o.statePath,
+		Logger:    o.log.WithName("provider"),
 	})
 	if err != nil {
-		logger.Error(err, "build provider")
-		os.Exit(1)
+		return fmt.Errorf("build provider: %w", err)
 	}
 
-	kubeletPort, err := listenPort(*listenAddr)
+	opts, err := o.nodeOptions(clientset)
 	if err != nil {
-		logger.Error(err, "parse --listen-addr")
-		os.Exit(1)
+		return err
+	}
+	n, err := nodeutil.NewNode(o.nodeName, o.providerFactory(p), opts...)
+	if err != nil {
+		return fmt.Errorf("create virtual-kubelet node: %w", err)
 	}
 
+	if o.orphanInterval > 0 {
+		go p.RunOrphanScan(ctx, o.orphanInterval)
+	}
+	if o.publishInventory {
+		if err := o.startInventoryPublisher(ctx, cfg, p, lister); err != nil {
+			return err
+		}
+	}
+
+	o.log.Info("starting virtual node", "node", o.nodeName, "sandboxd", o.sandboxdURL)
+	if err := n.Run(ctx); err != nil && ctx.Err() == nil {
+		return fmt.Errorf("virtual-kubelet node exited: %w", err)
+	}
+	return nil
+}
+
+// sandboxdToken reads the node api token, if one was configured.
+func (o *options) sandboxdToken() (string, error) {
+	if o.tokenFile == "" {
+		return "", nil
+	}
+	b, err := os.ReadFile(o.tokenFile) //nolint:gosec // operator-supplied path
+	if err != nil {
+		return "", fmt.Errorf("read sandboxd token file: %w", err)
+	}
+	return strings.TrimSpace(string(b)), nil
+}
+
+// providerFactory returns the nodeutil hook that stamps this node's labels,
+// taint, addresses and advertised capacity before the provider is served.
+func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc {
 	// Advertised capacity is a scheduling budget only — the pod is a placeholder
 	// and sandboxd holds the real microVM. Without it the scheduler sees 0
 	// allocatable and rejects every sandbox pod.
 	capacity := corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse(*nodeCPU),
-		corev1.ResourceMemory: resource.MustParse(*nodeMem),
-		corev1.ResourcePods:   resource.MustParse(*nodePods),
+		corev1.ResourceCPU:    resource.MustParse(o.nodeCPU),
+		corev1.ResourceMemory: resource.MustParse(o.nodeMem),
+		corev1.ResourcePods:   resource.MustParse(o.nodePods),
 	}
-
-	newProvider := func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
-		if cfg.Node != nil {
-			if cfg.Node.Labels == nil {
-				cfg.Node.Labels = map[string]string{}
-			}
-			cfg.Node.Labels["type"] = "virtual-kubelet"
-			maps.Copy(cfg.Node.Labels, parseLabels(*podLabels))
-			cfg.Node.Spec.Taints = append(cfg.Node.Spec.Taints, corev1.Taint{
-				Key:    TaintKey,
-				Value:  provider.RuntimeSandboxd,
-				Effect: corev1.TaintEffectNoSchedule,
-			})
-			addrs := []corev1.NodeAddress{{Type: corev1.NodeHostName, Address: *nodeName}}
-			if *nodeIP != "" {
-				addrs = append([]corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: *nodeIP}}, addrs...)
-			}
-			cfg.Node.Status.Addresses = addrs
-			cfg.Node.Status.DaemonEndpoints.KubeletEndpoint.Port = kubeletPort
-			cfg.Node.Status.Capacity = capacity
-			cfg.Node.Status.Allocatable = capacity
+	kubeletPort, _ := listenPort(o.listenAddr)
+	return func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
+		if cfg.Node == nil {
+			return p, nil, nil
 		}
+		if cfg.Node.Labels == nil {
+			cfg.Node.Labels = map[string]string{}
+		}
+		cfg.Node.Labels["type"] = "virtual-kubelet"
+		maps.Copy(cfg.Node.Labels, parseLabels(o.podLabels))
+		cfg.Node.Spec.Taints = append(cfg.Node.Spec.Taints, corev1.Taint{
+			Key:    TaintKey,
+			Value:  provider.RuntimeSandboxd,
+			Effect: corev1.TaintEffectNoSchedule,
+		})
+		addrs := []corev1.NodeAddress{{Type: corev1.NodeHostName, Address: o.nodeName}}
+		if o.nodeIP != "" {
+			addrs = append([]corev1.NodeAddress{{Type: corev1.NodeInternalIP, Address: o.nodeIP}}, addrs...)
+		}
+		cfg.Node.Status.Addresses = addrs
+		cfg.Node.Status.DaemonEndpoints.KubeletEndpoint.Port = kubeletPort
+		cfg.Node.Status.Capacity = capacity
+		cfg.Node.Status.Allocatable = capacity
 		return p, nil, nil
 	}
+}
 
+// nodeOptions builds the virtual-kubelet node options, including the kubelet
+// API TLS material.
+func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOpt, error) {
+	if _, err := listenPort(o.listenAddr); err != nil {
+		return nil, fmt.Errorf("parse --listen-addr: %w", err)
+	}
 	kubeletMux := http.NewServeMux()
 	opts := []nodeutil.NodeOpt{
 		nodeutil.WithClient(clientset),
 		nodeutil.AttachProviderRoutes(kubeletMux),
 		func(c *nodeutil.NodeConfig) error {
-			c.HTTPListenAddr = *listenAddr
+			c.HTTPListenAddr = o.listenAddr
 			c.Handler = kubeletMux
 			return nil
 		},
 	}
+
 	// virtual-kubelet only serves the kubelet API over TLS. Reuse the node's
-	// kubelet cert when present, else self-sign one so every node's API surface is
-	// uniform regardless of what the co-located vk-cocoon carries.
+	// kubelet cert when present, else self-sign one so every node's API surface
+	// is uniform regardless of what the co-located vk-cocoon carries.
 	var cert tls.Certificate
-	if *tlsCert != "" && *tlsKey != "" && fileReadable(*tlsCert) && fileReadable(*tlsKey) {
-		cert, err = tls.LoadX509KeyPair(*tlsCert, *tlsKey)
-		if err != nil {
-			logger.Error(err, "load kubelet TLS cert")
-			os.Exit(1)
+	var err error
+	if o.tlsCert != "" && o.tlsKey != "" && fileReadable(o.tlsCert) && fileReadable(o.tlsKey) {
+		if cert, err = tls.LoadX509KeyPair(o.tlsCert, o.tlsKey); err != nil {
+			return nil, fmt.Errorf("load kubelet TLS cert: %w", err)
 		}
 	} else {
-		logger.Info("kubelet cert absent; self-signing", "node", *nodeName)
-		cert, err = selfSignedCert(*nodeName, *nodeIP, "127.0.0.1")
-		if err != nil {
-			logger.Error(err, "self-sign kubelet cert")
-			os.Exit(1)
+		o.log.Info("kubelet cert absent; self-signing", "node", o.nodeName)
+		if cert, err = selfSignedCert(o.nodeName, o.nodeIP, "127.0.0.1"); err != nil {
+			return nil, fmt.Errorf("self-sign kubelet cert: %w", err)
 		}
 	}
-	opts = append(opts, func(c *nodeutil.NodeConfig) error {
+	return append(opts, func(c *nodeutil.NodeConfig) error {
 		c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
 		return nil
-	})
+	}), nil
+}
 
-	n, err := nodeutil.NewNode(*nodeName, newProvider, opts...)
+// startInventoryPublisher launches the O(nodes) NodeInventory publish loop that
+// feeds the operator's aggregated read and claim-routing paths.
+func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, p *provider.Provider, lister *sandboxdx.ListClient) error {
+	cclient, err := ctrlclient.New(cfg, ctrlclient.Options{})
 	if err != nil {
-		logger.Error(err, "create virtual-kubelet node")
-		os.Exit(1)
+		return fmt.Errorf("controller-runtime client for inventory publish: %w", err)
 	}
-
-	if *orphanInterval > 0 {
-		go p.RunOrphanScan(ctx, *orphanInterval)
+	advertiseAddr := o.sandboxdAddr
+	if advertiseAddr == "" {
+		advertiseAddr = hostPort(o.sandboxdURL)
 	}
-
-	if *publishInventory {
-		cclient, cerr := ctrlclient.New(cfg, ctrlclient.Options{})
-		if cerr != nil {
-			logger.Error(cerr, "controller-runtime client for inventory publish")
-			os.Exit(1)
-		}
-		advertiseAddr := *sandboxdAddr
-		if advertiseAddr == "" {
-			advertiseAddr = hostPort(*sandboxdURL)
-		}
-		src := inventory.NewLiveSource(p, lister)
-		infoSrc := inventory.NewNodeInfoSource(advertiseAddr, lister)
-		pub := inventory.NewPublisher(*nodeName, src, infoSrc,
-			scale.NewSSAInventoryApplier(cclient, "vk-sandbox"), logger.WithName("inventory"))
-		go pub.PublishPeriodically(ctx, *publishInterval)
-	}
-
-	logger.Info("starting virtual node", "node", *nodeName, "sandboxd", *sandboxdURL)
-	if err := n.Run(ctx); err != nil && ctx.Err() == nil {
-		logger.Error(err, "virtual-kubelet node exited")
-		os.Exit(1)
-	}
-	logger.Info("vk-sandbox exiting")
+	pub := inventory.NewPublisher(o.nodeName,
+		inventory.NewLiveSource(p, lister),
+		inventory.NewNodeInfoSource(advertiseAddr, lister),
+		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"),
+		o.log.WithName("inventory"))
+	go pub.PublishPeriodically(ctx, o.publishInterval)
+	return nil
 }
 
 func envOr(key, def string) string {

@@ -2,10 +2,6 @@ package sandboxdx
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
 )
@@ -35,27 +31,9 @@ type infoPoolKey struct {
 // requested (template, net, size). GET /v1/info is a root-token operator surface
 // (tenant tokens get 403), so it reuses this client's node root token.
 func (c *ListClient) Info(ctx context.Context) ([]extv1beta1.PoolCapacity, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/info", nil)
-	if err != nil {
-		return nil, err
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sandboxd info: %w", err)
-	}
-	defer func() {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sandboxd info: unexpected status %d", resp.StatusCode)
-	}
 	var out infoResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("sandboxd info: decode: %w", err)
+	if err := c.get(ctx, "/v1/info", "info", &out); err != nil {
+		return nil, err
 	}
 	pools := make([]extv1beta1.PoolCapacity, 0, len(out.Pools))
 	for _, p := range out.Pools {

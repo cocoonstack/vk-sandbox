@@ -38,27 +38,37 @@ type listResponse struct {
 
 // ListSandboxes returns the node's live sandboxes. Implements provider.Lister.
 func (c *ListClient) ListSandboxes(ctx context.Context) ([]provider.ListedSandbox, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/v1/sandboxes", nil)
-	if err != nil {
+	var out listResponse
+	if err := c.get(ctx, "/v1/sandboxes", "list", &out); err != nil {
 		return nil, err
+	}
+	return out.Sandboxes, nil
+}
+
+// get performs an authenticated GET against a sandboxd operator surface and
+// decodes the JSON body into v. The body is always drained so the pooled
+// connection is reusable.
+func (c *ListClient) get(ctx context.Context, path, op string, v any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return err
 	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("sandboxd list: %w", err)
+		return fmt.Errorf("sandboxd %s: %w", op, err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sandboxd list: unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("sandboxd %s: unexpected status %d", op, resp.StatusCode)
 	}
-	var out listResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("sandboxd list: decode: %w", err)
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("sandboxd %s: decode: %w", op, err)
 	}
-	return out.Sandboxes, nil
+	return nil
 }
