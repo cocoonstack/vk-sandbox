@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
-	"k8s.io/utils/ptr"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
@@ -369,7 +368,7 @@ func sandboxPod(ns, name string, uid types.UID, ownerName string, ownerUID types
 	if ownerName != "" {
 		pod.OwnerReferences = []metav1.OwnerReference{{
 			APIVersion: "agents.x-k8s.io/v1beta1", Kind: "Sandbox",
-			Name: ownerName, UID: ownerUID, Controller: ptr.To(true), //nolint:modernize // new(bool) is false; this must be true
+			Name: ownerName, UID: ownerUID, Controller: new(true),
 		}}
 	}
 	return pod
