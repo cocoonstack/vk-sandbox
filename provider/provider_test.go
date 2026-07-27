@@ -226,7 +226,8 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 
 // TestOrphanScanExternalClaimsAndLogDedup pins the #3 contract: a row whose
 // claim_ref this provider does not hold is an apiserver-direct claim — not an
-// orphan candidate — and each verdict is logged on first sight, not every cycle.
+// orphan candidate — and every verdict (external, orphan, stale) is logged on
+// first sight, not every cycle.
 func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -239,18 +240,22 @@ func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 		ListedSandbox{ID: "sb_ext", ClaimRef: "default/api-direct"},
 		ListedSandbox{ID: "sb_orphan"})
 	sd.mu.Unlock()
+	p.claims["ns1/stale-pod"] = Claim{ID: "sb_stale"}
 
 	for cycle := range 3 {
-		orphans, _, ok := p.OrphanScan(ctx)
+		orphans, stale, ok := p.OrphanScan(ctx)
 		if !ok {
 			t.Fatalf("cycle %d: scan failed", cycle)
 		}
 		if len(orphans) != 1 || orphans[0] != "sb_orphan" {
 			t.Fatalf("cycle %d: want orphans [sb_orphan], got %v", cycle, orphans)
 		}
+		if len(stale) != 1 || stale[0] != "ns1/stale-pod" {
+			t.Fatalf("cycle %d: want stale [ns1/stale-pod], got %v", cycle, stale)
+		}
 	}
-	if logLines != 2 {
-		t.Fatalf("verdict log lines = %d, want 2 (one per sandbox, not per cycle)", logLines)
+	if logLines != 3 {
+		t.Fatalf("verdict log lines = %d, want 3 (one per verdict, not per cycle)", logLines)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 const (
 	verdictExternal = "external"
 	verdictOrphan   = "orphan"
+	verdictStale    = "stale"
 )
 
 // OrphanScan compares the node's live sandboxes against the claims table.
@@ -21,9 +22,8 @@ const (
 //     sweep (2026-05-15); on failure the whole cycle is skipped.
 //
 // Returns (orphans, staleClaims, ok): sandboxd rows with neither a local claim
-// nor a claim_ref (a claim_ref this provider does not hold means an
-// apiserver-direct claim — externally owned, not an orphan candidate), and
-// claim entries whose sandbox is gone (reaped at TTL or released elsewhere).
+// nor a claim_ref (an unheld claim_ref marks an apiserver-direct claim, not an
+// orphan), and claim entries whose sandbox is gone.
 func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaims []string, ok bool) {
 	if p.lister == nil {
 		return nil, nil, false
@@ -46,37 +46,31 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 	}
 	p.mu.RUnlock()
 
-	// Verdicts are logged on first sight only (#3): the apiserver-direct claim
-	// path legitimately holds sandboxes this provider never sees, and re-logging
-	// every cycle buried genuine orphans in permanent noise.
 	verdicts := make(map[string]string, len(listed))
 	for _, s := range listed {
 		if _, ok := claimed[s.ID]; ok {
 			continue
 		}
 		if s.ClaimRef != "" {
-			verdicts[s.ID] = verdictExternal
-			if p.orphanVerdicts[s.ID] != verdictExternal {
-				p.log.Info("sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate",
-					"sandbox", s.ID, "claimRef", s.ClaimRef)
-			}
+			p.recordVerdict(verdicts, s.ID, verdictExternal,
+				"sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate",
+				"sandbox", s.ID, "claimRef", s.ClaimRef)
 			continue
 		}
 		orphans = append(orphans, s.ID)
-		verdicts[s.ID] = verdictOrphan
-		if p.orphanVerdicts[s.ID] != verdictOrphan {
-			p.log.Info("possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
-				"sandbox", s.ID)
-		}
+		p.recordVerdict(verdicts, s.ID, verdictOrphan,
+			"possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
+			"sandbox", s.ID)
 	}
-	p.orphanVerdicts = verdicts
 	for id, key := range claimed {
 		if _, ok := live[id]; !ok {
 			staleClaims = append(staleClaims, key)
-			p.log.Info("claim references a sandbox no longer on the node (TTL reap or external release)",
+			p.recordVerdict(verdicts, id, verdictStale,
+				"claim references a sandbox no longer on the node (TTL reap or external release)",
 				"pod", key, "sandbox", id)
 		}
 	}
+	p.orphanVerdicts = verdicts
 	return orphans, staleClaims, true
 }
 
@@ -129,6 +123,16 @@ func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
 		case <-t.C:
 			p.publishExpiredLeases(ctx)
 		}
+	}
+}
+
+// recordVerdict stores this cycle's verdict for a sandbox and logs only a
+// transition (#3): re-logging an unchanged verdict every cycle buried genuine
+// orphans in permanent noise.
+func (p *Provider) recordVerdict(verdicts map[string]string, id, verdict, msg string, kv ...any) {
+	verdicts[id] = verdict
+	if p.orphanVerdicts[id] != verdict {
+		p.log.Info(msg, kv...)
 	}
 }
 
