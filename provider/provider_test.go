@@ -1242,6 +1242,37 @@ func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
 	}
 }
 
+func TestTheWatchDoesNotTerminalizeAReplacementPod(t *testing.T) {
+	// Between the listing and the publication the key can change hands: old Pod
+	// deleted, a new one created with a fresh claim. The expiry belongs to the
+	// old claim; stamping it on the successor would falsely kill it forever.
+	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := &listAfterHook{}
+	p.lister = hook
+	notified := make(chan *corev1.Pod, 4)
+	p.NotifyPods(t.Context(), func(pod *corev1.Pod) { notified <- pod })
+	p.mu.Lock()
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u-old", "", "")
+	p.claims["ns/p"] = Claim{ID: "sb_old", Token: "t", Deadline: metav1.NewTime(time.Now().Add(-time.Hour))}
+	p.mu.Unlock()
+	hook.onList = func() {
+		p.mu.Lock()
+		p.pods["ns/p"] = sandboxPod("ns", "p", "u-new", "", "")
+		p.claims["ns/p"] = Claim{ID: "sb_new", Token: "t2", Deadline: metav1.NewTime(time.Now().Add(time.Hour))}
+		p.mu.Unlock()
+	}
+
+	p.publishExpiredLeases(t.Context())
+	select {
+	case pod := <-notified:
+		t.Fatalf("the replacement pod was published %v with the predecessor's expiry", pod.Status.Phase)
+	default:
+	}
+}
+
 // listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()

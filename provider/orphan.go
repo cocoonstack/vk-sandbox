@@ -159,10 +159,13 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 			p.refreshDeadline(cand.key, cand.claim.ID, parseDeadline(rowDeadline))
 			continue
 		}
+		// The key may have changed hands behind the listing; the expiry
+		// belongs to the candidate claim, not to whatever holds the key now.
 		p.mu.RLock()
 		pod := p.pods[cand.key]
+		current, held := p.claims[cand.key]
 		p.mu.RUnlock()
-		if pod == nil {
+		if pod == nil || !held || current.ID != cand.claim.ID {
 			continue
 		}
 		out := pod.DeepCopy()

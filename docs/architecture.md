@@ -118,7 +118,10 @@ The cached deadline is not authoritative: the archive lifecycle rewrites a
 claim's lease on the node. `Failed` is terminal, so before publishing it — and
 before replacing a past-deadline row — the node's listing confirms the sandbox
 is really gone; a still-listed claim just has its lease refreshed from the
-listing, and an unlistable node defers rather than declares.
+listing, and an unlistable node defers rather than declares. The publication
+itself re-checks identity: if the key changed hands behind the listing (old
+Pod deleted, successor claimed fresh), the expiry belonged to the old claim
+and nothing is published against the new one.
 
 ## Audit-only orphan scan
 
