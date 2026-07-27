@@ -9,10 +9,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BenchmarkCommitClaim measures making one claim durable with a full
-// 2000-claim table — the advertised node pod capacity. Every commit
-// serializes the whole table under saveMu (#2), so ns/op is the per-create
-// persistence floor and its inverse the node's claim-commit throughput ceiling.
+// BenchmarkCommitClaim measures one claim commit against a full 2000-claim
+// table (the advertised pod capacity); every commit serializes the whole table
+// under saveMu (#2), so the inverse of ns/op is the claim-commit ceiling.
 func BenchmarkCommitClaim(b *testing.B) {
 	p, err := New(b.Context(), Config{
 		NodeName:  "bench",
