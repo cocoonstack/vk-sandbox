@@ -79,7 +79,8 @@ The full decision table for the last two rows is in
 sandboxd persists a claim before writing the HTTP response, so a transport
 failure can leave a live sandbox whose token nobody received. sandboxd is on
 loopback, making that a process-death-class rarity, and the stray is bounded
-by its lease and logged by the orphan scan — so there is deliberately no
+by its lease — or by the archive retention policy, where an archive-enabled
+pool may keep it longer — and logged by the orphan scan — so there is deliberately no
 recovery machinery for it. The claim still carries the pod key as `claim_ref`,
 which is what lets an operator trace such a stray to the Pod it was for.
 

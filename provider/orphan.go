@@ -3,8 +3,6 @@ package provider
 import (
 	"context"
 	"time"
-
-	corev1 "k8s.io/api/core/v1"
 )
 
 // OrphanScan compares the node's live sandboxes against the claims table.
@@ -105,14 +103,18 @@ func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			p.publishExpiredLeases()
+			p.publishExpiredLeases(ctx)
 		}
 	}
 }
 
-func (p *Provider) publishExpiredLeases() {
+func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	now := time.Now()
-	var expired []*corev1.Pod
+	type candidate struct {
+		key   string
+		claim Claim
+	}
+	var candidates []candidate
 	p.mu.RLock()
 	for key, c := range p.claims {
 		if c.Deadline.IsZero() || now.Before(c.Deadline.Time) {
@@ -124,16 +126,47 @@ func (p *Provider) publishExpiredLeases() {
 		if _, unverified := p.quarantined[key]; unverified {
 			continue
 		}
-		pod := p.pods[key]
+		if p.pods[key] == nil {
+			continue
+		}
+		candidates = append(candidates, candidate{key: key, claim: c})
+	}
+	p.mu.RUnlock()
+	if len(candidates) == 0 {
+		return
+	}
+
+	// Failed is terminal — virtual-kubelet refuses further updates for such a
+	// Pod — and the cached deadline is not authoritative: the archive lifecycle
+	// rewrites a claim's lease on the node. So the node confirms every terminal
+	// publication, a still-listed claim just gets its deadline refreshed, and an
+	// unlistable node publishes nothing this tick.
+	live := map[string]string{}
+	if p.lister != nil {
+		listed, err := p.lister.ListSandboxes(ctx)
+		if err != nil {
+			p.log.Info("sandboxd list failed; deferring lease-expiry publication", "err", err.Error())
+			return
+		}
+		for _, row := range listed {
+			live[row.ID] = row.Deadline
+		}
+	}
+
+	for _, cand := range candidates {
+		rowDeadline, alive := live[cand.claim.ID]
+		if alive {
+			p.refreshDeadline(cand.key, cand.claim.ID, parseDeadline(rowDeadline))
+			continue
+		}
+		p.mu.RLock()
+		pod := p.pods[cand.key]
+		p.mu.RUnlock()
 		if pod == nil {
 			continue
 		}
 		out := pod.DeepCopy()
-		out.Status = expiredStatus(out, c)
-		expired = append(expired, out)
-	}
-	p.mu.RUnlock()
-	for _, pod := range expired {
-		p.notify(pod)
+		out.Status = expiredStatus(out, cand.claim)
+		p.notify(out)
 	}
 }

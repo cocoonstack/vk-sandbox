@@ -1153,6 +1153,95 @@ func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
 	}
 }
 
+func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
+	// Failed is terminal, and the archive lifecycle rewrites leases on the node:
+	// a still-listed claim must get its deadline refreshed, not a death notice.
+	sd := &fakeSandboxd{live: []ListedSandbox{{
+		ID: "sb_archived", Deadline: time.Now().Add(6 * time.Hour).Format(time.RFC3339Nano),
+	}}}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notified := make(chan *corev1.Pod, 4)
+	p.NotifyPods(t.Context(), func(pod *corev1.Pod) { notified <- pod })
+	p.mu.Lock()
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+	p.claims["ns/p"] = Claim{ID: "sb_archived", Token: "t", Deadline: metav1.NewTime(time.Now().Add(-time.Hour))}
+	p.mu.Unlock()
+
+	p.publishExpiredLeases(t.Context())
+	select {
+	case pod := <-notified:
+		t.Fatalf("a live, listed claim was published %v", pod.Status.Phase)
+	default:
+	}
+	c, _ := p.heldClaimFor("ns/p")
+	if !c.Deadline.Time.After(time.Now()) {
+		t.Fatalf("the node's lease was not adopted: %v", c.Deadline)
+	}
+
+	// Once the node stops listing it, the death notice goes out.
+	sd.mu.Lock()
+	sd.live = nil
+	sd.mu.Unlock()
+	p.refreshDeadline("ns/p", "sb_archived", metav1.NewTime(time.Now().Add(-time.Minute)))
+	p.publishExpiredLeases(t.Context())
+	select {
+	case pod := <-notified:
+		if pod.Status.Phase != corev1.PodFailed {
+			t.Fatalf("published %v, want Failed", pod.Status.Phase)
+		}
+	default:
+		t.Fatal("a confirmed-gone claim was never published as Failed")
+	}
+}
+
+func TestTheWatchPublishesNothingWhenTheNodeCannotBeListed(t *testing.T) {
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	notified := make(chan *corev1.Pod, 4)
+	p.NotifyPods(t.Context(), func(pod *corev1.Pod) { notified <- pod })
+	p.mu.Lock()
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+	p.claims["ns/p"] = Claim{ID: "sb_x", Token: "t", Deadline: metav1.NewTime(time.Now().Add(-time.Hour))}
+	p.mu.Unlock()
+
+	p.publishExpiredLeases(t.Context())
+	select {
+	case pod := <-notified:
+		t.Fatalf("published %v with an unlistable node", pod.Status.Phase)
+	default:
+	}
+}
+
+func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
+	// Archived keep-forever rows list with a zero deadline; the claim is alive
+	// and its credential is the only one there is.
+	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_archived"}}}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.claims["ns/p"] = Claim{ID: "sb_archived", Token: "t", ClaimedAt: metav1.Now(), Deadline: metav1.NewTime(time.Now().Add(-time.Hour))}
+	p.mu.Unlock()
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if sd.claims != 0 {
+		t.Fatalf("claims = %d; a live archived claim was replaced", sd.claims)
+	}
+	c, ok := p.claimFor("ns/p")
+	if !ok || c.ID != "sb_archived" || !c.Deadline.IsZero() {
+		t.Fatalf("claim = %+v ok=%v, want the archived row adopted with its keep-forever lease", c, ok)
+	}
+}
+
 // listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()

@@ -77,6 +77,9 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	if err := p.resolveUnverifiedClaim(ctx, key); err != nil {
 		return err
 	}
+	if err := p.settleExpiredClaim(ctx, key); err != nil {
+		return err
+	}
 
 	// Adopt-in-place: an existing claim for this key survives pod churn. Its
 	// release credential is already durable — it was persisted when the sandbox
@@ -163,12 +166,6 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	if _, unverified := p.quarantined[key]; unverified {
 		return Claim{}, false
 	}
-	// The reaper destroyed this VM at its deadline; binding a pod to it would
-	// publish Running for a dead sandbox. The fresh claim below replaces the
-	// row — its credential authorizes nothing anymore.
-	if !c.Deadline.IsZero() && time.Now().After(c.Deadline.Time) {
-		return Claim{}, false
-	}
 	c.PodUID = string(pod.UID)
 	if c.ClaimedAt.IsZero() {
 		c.ClaimedAt = metav1.Now()
@@ -176,6 +173,36 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	p.claims[key] = c
 	p.pods[key] = pod.DeepCopy()
 	return c, true
+}
+
+// settleExpiredClaim decides what a past-deadline row means before its key is
+// reused. The cached deadline is not authoritative — the archive lifecycle
+// rewrites a claim's lease on the node — so a still-listed claim has its
+// deadline refreshed and stays adoptable, only a claim the node no longer
+// holds is dropped for replacement, and an unlistable node fails the create
+// rather than overwriting what may be a live sandbox's only credential.
+func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
+	c, held := p.claimFor(key)
+	if !held || c.Deadline.IsZero() || time.Now().Before(c.Deadline.Time) {
+		return nil
+	}
+	if p.lister == nil {
+		// Nothing can confirm liveness; the cached deadline is all there is.
+		p.dropClaim(key, c.ID)
+		return nil
+	}
+	listed, err := p.lister.ListSandboxes(ctx)
+	if err != nil {
+		return fmt.Errorf("pod %s: claim %s is past its cached deadline and sandboxd cannot be listed; refusing to replace it: %w", key, c.ID, err)
+	}
+	for _, row := range listed {
+		if row.ID == c.ID {
+			p.refreshDeadline(key, c.ID, parseDeadline(row.Deadline))
+			return nil
+		}
+	}
+	p.dropClaim(key, c.ID)
+	return nil
 }
 
 // resolveUnverifiedClaim settles a quarantined row before its pod key is reused.

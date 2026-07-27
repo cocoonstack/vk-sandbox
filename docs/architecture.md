@@ -112,8 +112,13 @@ sandboxd's reaper destroys the VM at the deadline, so the provider records the
 deadline returned with each claim (persisted with it) and a small watch pushes
 the Pod `Failed` once it passes. Pushed, not polled: implementing `NotifyPods`
 makes this an asynchronous provider, and virtual-kubelet installs no status
-poller for those — a status that is not published does not exist. Adoption
-refuses a row past its deadline; the fresh claim replaces it.
+poller for those — a status that is not published does not exist.
+
+The cached deadline is not authoritative: the archive lifecycle rewrites a
+claim's lease on the node. `Failed` is terminal, so before publishing it — and
+before replacing a past-deadline row — the node's listing confirms the sandbox
+is really gone; a still-listed claim just has its lease refreshed from the
+listing, and an unlistable node defers rather than declares.
 
 ## Audit-only orphan scan
 

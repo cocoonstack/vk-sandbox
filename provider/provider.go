@@ -337,6 +337,26 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 	return true
 }
 
+// dropClaim removes a row the node confirmed gone. ID-guarded like refresh.
+func (p *Provider) dropClaim(key, id string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.claims[key]; ok && c.ID == id {
+		delete(p.claims, key)
+	}
+}
+
+// refreshDeadline adopts the node's view of a claim's lease. ID-guarded: the
+// row may have been replaced since the caller looked.
+func (p *Provider) refreshDeadline(key, id string, deadline metav1.Time) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.claims[key]; ok && c.ID == id {
+		c.Deadline = deadline
+		p.claims[key] = c
+	}
+}
+
 // hasQuarantined reports whether any loaded row is still unverified.
 func (p *Provider) hasQuarantined() bool {
 	p.mu.RLock()
