@@ -133,7 +133,7 @@ type Provider struct {
 }
 
 // New builds a Provider and loads any persisted claims table.
-func New(cfg Config) (*Provider, error) {
+func New(ctx context.Context, cfg Config) (*Provider, error) {
 	p := &Provider{
 		nodeName:    cfg.NodeName,
 		client:      cfg.Client,
@@ -154,7 +154,7 @@ func New(cfg Config) (*Provider, error) {
 	// would hide it forever; that shape is tests and the no-inventory path.
 	if p.lister != nil {
 		p.quarantineLoadedClaims()
-		p.VerifyClaimsAgainstNode(context.Background())
+		p.VerifyClaimsAgainstNode(ctx)
 	}
 	// Prove the claims table is writable before accepting any Pod. Running with an
 	// unwritable state path would persist no release credential, so every claim

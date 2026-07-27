@@ -1,7 +1,6 @@
 package sandboxdx
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,7 +22,7 @@ func TestListSandboxes(t *testing.T) {
 	defer srv.Close()
 
 	c := NewListClient(srv.URL, "root-tok", 0)
-	got, err := c.ListSandboxes(context.Background())
+	got, err := c.ListSandboxes(t.Context())
 	if err != nil {
 		t.Fatalf("ListSandboxes: %v", err)
 	}
@@ -43,7 +42,7 @@ func TestListSandboxesAuthFailure(t *testing.T) {
 	defer srv.Close()
 
 	c := NewListClient(srv.URL, "wrong", 0)
-	if _, err := c.ListSandboxes(context.Background()); err == nil {
+	if _, err := c.ListSandboxes(t.Context()); err == nil {
 		t.Fatal("expected error on 401")
 	}
 }

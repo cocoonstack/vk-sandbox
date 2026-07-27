@@ -85,7 +85,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	// A stranded claim from an earlier failed create still holds a live microVM
 	// and its credential exists nowhere else. Claiming over it would destroy the
 	// only handle to that sandbox, so it is returned first.
-	if err := p.clearStrandedClaim(key); err != nil {
+	if err := p.clearStrandedClaim(ctx, key); err != nil {
 		return err
 	}
 
@@ -132,7 +132,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	// release credential could not be stored is still undoable — and must be
 	// undone, or the microVM leaks with no way to reach it after a restart.
 	if err := p.commitClaim(key); err != nil {
-		return p.undoUnpersistedClaim(key, c, err)
+		return p.undoUnpersistedClaim(ctx, key, c, err)
 	}
 
 	p.log.Info("claimed hot sandbox", "pod", key, "claim", c.ID, "addr", c.Address)
@@ -208,7 +208,7 @@ func (p *Provider) resolveUnverifiedClaim(ctx context.Context, key string) error
 // clearStrandedClaim returns a sandbox left behind by an earlier create whose
 // claim never reached disk and whose compensating release failed. Until it is
 // gone this key cannot be reused: its credential lives only in memory.
-func (p *Provider) clearStrandedClaim(key string) error {
+func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 	p.mu.RLock()
 	c, held := p.claims[key]
 	_, pending := p.tentative[key]
@@ -217,36 +217,22 @@ func (p *Provider) clearStrandedClaim(key string) error {
 		return nil
 	}
 
-	// Its own deadline, like the undo path: returning this sandbox must not
-	// depend on a caller context that may already be canceled.
-	ctx, cancel := context.WithTimeout(context.Background(), undoReleaseTimeout)
-	defer cancel()
-	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
+	if err := p.releaseDetached(ctx, c); err != nil {
 		var he *sandboxd.HTTPError
 		if !errors.As(err, &he) || he.StatusCode != 404 {
 			return fmt.Errorf("pod %s: a previous sandbox %s could not be returned and its credential is only in memory: %w", key, c.ID, err)
 		}
 	}
-	p.mu.Lock()
-	if cur, ok := p.claims[key]; ok && cur.ID == c.ID {
-		delete(p.claims, key)
-		delete(p.pods, key)
-	}
-	delete(p.tentative, key)
-	p.mu.Unlock()
+	p.withdrawClaim(key, c.ID)
 	p.log.Info("returned a stranded sandbox before reusing its pod key", "pod", key, "claim", c.ID)
 	return nil
 }
 
 // undoUnpersistedClaim hands a just-claimed sandbox back after its release
-// credential could not be stored. The release runs on its own deadline because
-// the caller's context may already be canceled. A release that also fails keeps
-// the in-memory claim so a later DeletePod can still reach the sandbox.
-func (p *Provider) undoUnpersistedClaim(key string, c Claim, persistErr error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), undoReleaseTimeout)
-	defer cancel()
-
-	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
+// credential could not be stored. A release that also fails keeps the
+// in-memory claim so a later DeletePod can still reach the sandbox.
+func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim, persistErr error) error {
+	if err := p.releaseDetached(ctx, c); err != nil {
 		p.log.Error(err, "could not return a sandbox whose claim failed to persist; keeping the credential in memory",
 			"pod", key, "claim", c.ID)
 		return errors.Join(
@@ -254,15 +240,7 @@ func (p *Provider) undoUnpersistedClaim(key string, c Claim, persistErr error) e
 			fmt.Errorf("release sandbox %s: %w", c.ID, err),
 		)
 	}
-	// The claim and pod entries were written together, so they are withdrawn
-	// together and only while they are still the ones this call stored.
-	p.mu.Lock()
-	if cur, ok := p.claims[key]; ok && cur.ID == c.ID {
-		delete(p.claims, key)
-		delete(p.pods, key)
-	}
-	delete(p.tentative, key)
-	p.mu.Unlock()
+	p.withdrawClaim(key, c.ID)
 	p.log.Info("returned sandbox after its claim could not be persisted", "pod", key, "claim", c.ID)
 	return fmt.Errorf("persist claim for %s: %w", key, persistErr)
 }
@@ -291,6 +269,26 @@ func (p *Provider) pushRunning(pod *corev1.Pod, c Claim) {
 	out.Annotations[AnnClaimID] = c.ID
 	out.Status = runningStatus(out, c)
 	p.notify(out)
+}
+
+// releaseDetached runs on its own deadline: a compensating release must not
+// depend on a caller context that may already be canceled.
+func (p *Provider) releaseDetached(ctx context.Context, c Claim) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoReleaseTimeout)
+	defer cancel()
+	return p.client.Release(ctx, c.ID, c.Token)
+}
+
+// withdrawClaim removes the claim and pod entries together, and only while the
+// claim is still the one the caller stored.
+func (p *Provider) withdrawClaim(key, id string) {
+	p.mu.Lock()
+	if cur, ok := p.claims[key]; ok && cur.ID == id {
+		delete(p.claims, key)
+		delete(p.pods, key)
+	}
+	delete(p.tentative, key)
+	p.mu.Unlock()
 }
 
 func ann(pod *corev1.Pod, key, def string) string {

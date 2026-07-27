@@ -173,7 +173,7 @@ func (o *options) run() error {
 	sdClient := sandboxd.New(o.sandboxdURL, token, sandboxd.WithHTTPClient(hc))
 	lister := sandboxdx.NewListClient(o.sandboxdURL, token, sandboxdRequestTimeout)
 
-	p, err := provider.New(provider.Config{
+	p, err := provider.New(ctx, provider.Config{
 		NodeName:  o.nodeName,
 		Client:    sdClient,
 		Lister:    lister,

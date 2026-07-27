@@ -34,7 +34,7 @@ func TestLiveSandboxes(t *testing.T) {
 		{ID: "sb_noref"}, // no claim ref: falls back to the id
 	}
 	src := NewLiveSource(claims, lister)
-	got, err := src.LiveSandboxes(context.Background())
+	got, err := src.LiveSandboxes(t.Context())
 	if err != nil {
 		t.Fatalf("LiveSandboxes: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 	applier := &captureApplier{}
 	pub := NewPublisher("vk-sandboxd-26", live, info, applier, logr.Discard())
 
-	n, err := pub.Publish(context.Background())
+	n, err := pub.Publish(t.Context())
 	if err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 func TestPublisherWithoutInfo(t *testing.T) {
 	applier := &captureApplier{}
 	pub := NewPublisher("n1", staticLive{}, nil, applier, logr.Discard())
-	if _, err := pub.Publish(context.Background()); err != nil {
+	if _, err := pub.Publish(t.Context()); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 	if applier.got.Address != "" || applier.got.Pools != nil {

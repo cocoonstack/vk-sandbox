@@ -1,7 +1,6 @@
 package sandboxdx
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -28,7 +27,7 @@ func TestInfo(t *testing.T) {
 	defer srv.Close()
 
 	c := NewListClient(srv.URL, "root-tok", 0)
-	got, err := c.Info(context.Background())
+	got, err := c.Info(t.Context())
 	if err != nil {
 		t.Fatalf("Info: %v", err)
 	}
@@ -52,7 +51,7 @@ func TestInfoStatusError(t *testing.T) {
 	defer srv.Close()
 
 	c := NewListClient(srv.URL, "tenant-tok", 0)
-	if _, err := c.Info(context.Background()); err == nil {
+	if _, err := c.Info(t.Context()); err == nil {
 		t.Fatal("expected error on 403")
 	}
 }

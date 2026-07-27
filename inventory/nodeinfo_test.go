@@ -14,7 +14,7 @@ func TestNodeInfoSource(t *testing.T) {
 	pools := []extv1beta1.PoolCapacity{{Template: "base:24.04", Net: "none", Size: "small", Warm: 2, Target: 4}}
 	src := NewNodeInfoSource("172.16.26.2:7777", stubInfoClient{pools: pools})
 
-	ni, err := src.NodeInfo(context.Background())
+	ni, err := src.NodeInfo(t.Context())
 	if err != nil {
 		t.Fatalf("NodeInfo: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestNodeInfoSource(t *testing.T) {
 // publishing a half-empty inventory.
 func TestNodeInfoSourceError(t *testing.T) {
 	src := NewNodeInfoSource("172.16.26.2:7777", stubInfoClient{err: errors.New("boom")})
-	if _, err := src.NodeInfo(context.Background()); err == nil {
+	if _, err := src.NodeInfo(t.Context()); err == nil {
 		t.Fatal("expected error to propagate")
 	}
 }

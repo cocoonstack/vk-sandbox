@@ -35,7 +35,7 @@ var (
 // owner CR alive, pod deletion must NOT release the sandbox, and the same-key
 // replacement pod adopts the preserved claim without a second sandboxd claim.
 func TestDeleteWithoutAuthorityPreservesAndAdopts(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false)), "")
 
@@ -77,7 +77,7 @@ func TestDeleteWithoutAuthorityPreservesAndAdopts(t *testing.T) {
 // TestDeleteReleasesWhenOwnerGone: a structured NotFound naming the owner
 // authorizes release; the claim and pod entries are dropped.
 func TestDeleteReleasesWhenOwnerGone(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
 	p := newTestProvider(t, sd, dyn, "")
@@ -102,7 +102,7 @@ func TestDeleteReleasesWhenOwnerGone(t *testing.T) {
 
 // TestDeleteReleasesOnOwnerTeardown: deletionTimestamp on the owner authorizes.
 func TestDeleteReleasesOnOwnerTeardown(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", true)), "")
 
@@ -120,7 +120,7 @@ func TestDeleteReleasesOnOwnerTeardown(t *testing.T) {
 
 // TestDeletePreservesWhenOwnerUnverifiable: no dynamic client → preserve.
 func TestDeletePreservesWhenOwnerUnverifiable(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, nil, "")
 
@@ -142,7 +142,7 @@ func TestDeletePreservesWhenOwnerUnverifiable(t *testing.T) {
 // TestBarePodDeleteReleases: with no controller owner, the pod is its own
 // authority and deletion releases.
 func TestBarePodDeleteReleases(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, dynWith(t), "")
 
@@ -161,7 +161,7 @@ func TestBarePodDeleteReleases(t *testing.T) {
 // TestStaleUIDDeleteIgnored: a DeletePod bearing a previous generation's UID
 // must be a no-op.
 func TestStaleUIDDeleteIgnored(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, dynWith(t), "")
 
@@ -184,7 +184,7 @@ func TestStaleUIDDeleteIgnored(t *testing.T) {
 // TestOrphanScanAuditOnly: the scan reports but never releases, and a failed
 // list skips the cycle instead of reading as an empty node.
 func TestOrphanScanAuditOnly(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, dynWith(t), "")
 
@@ -226,7 +226,7 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 // TestStateRoundTrip: claims persist across a provider restart so release
 // credentials survive.
 func TestStateRoundTrip(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	statePath := filepath.Join(t.TempDir(), "claims.json")
 	sd := &fakeSandboxd{}
 	p1 := newTestProvider(t, sd, dynWith(t), statePath)
@@ -267,7 +267,7 @@ func TestPluralResource(t *testing.T) {
 // TestRuntimeMismatchRejected: a pod asking for a different runtime never
 // reaches sandboxd.
 func TestRuntimeMismatchRejected(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	p := newTestProvider(t, sd, dynWith(t), "")
 
@@ -295,7 +295,7 @@ func TestLoadStateReadsIndentedFileFromOlderBuild(t *testing.T) {
 	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestLoadStateReadsIndentedFileFromOlderBuild(t *testing.T) {
 
 func TestConcurrentSaveStateNeverLosesAClaim(t *testing.T) {
 	path := t.TempDir() + "/claims.json"
-	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestConcurrentSaveStateNeverLosesAClaim(t *testing.T) {
 }
 
 func TestGetPodStatusStartTimeIsStable(t *testing.T) {
-	p, err := New(Config{Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +364,7 @@ func TestStartTimeIsStableForAClaimTableFromAnOlderBuild(t *testing.T) {
 	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +384,7 @@ func TestClaimedAtBackfillIsPersisted(t *testing.T) {
 	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := New(Config{StatePath: path, Logger: logr.Discard()}); err != nil {
+	if _, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -398,11 +398,11 @@ func TestClaimedAtBackfillIsPersisted(t *testing.T) {
 		t.Fatalf("backfill was not written back: %s", b)
 	}
 
-	first, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	first, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	second, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +415,7 @@ func TestClaimedAtBackfillIsPersisted(t *testing.T) {
 
 func TestSaveStateRecreatesADeletedStateDir(t *testing.T) {
 	dir := t.TempDir() + "/nested"
-	p, err := New(Config{StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if _, err := New(Config{StatePath: dir + "/claims.json", Logger: logr.Discard()}); err == nil {
+	if _, err := New(t.Context(), Config{StatePath: dir + "/claims.json", Logger: logr.Discard()}); err == nil {
 		t.Fatal("New accepted a state path it cannot write")
 	}
 }
@@ -453,7 +453,7 @@ func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
 	// production path actually needs it, so the reported start time is always the
 	// real claim time.
 	sd := &fakeSandboxd{}
-	p, err := New(Config{NodeName: "n", Client: sd, StatePath: t.TempDir() + "/c.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: t.TempDir() + "/c.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +506,7 @@ func TestNewFailsWhenTheClaimedAtMigrationCannotBePersisted(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	if _, err := New(Config{StatePath: path, Logger: logr.Discard()}); err == nil {
+	if _, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()}); err == nil {
 		t.Fatal("New succeeded even though the claimedAt migration could not be written")
 	}
 }
@@ -514,7 +514,7 @@ func TestNewFailsWhenTheClaimedAtMigrationCannotBePersisted(t *testing.T) {
 func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
 	dir := t.TempDir()
 	sd := &fakeSandboxd{}
-	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -546,7 +546,7 @@ func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
 func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +579,7 @@ func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
 func TestATentativeClaimIsNeverReportedRunning(t *testing.T) {
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -609,7 +609,7 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 	// destroy the only handle to that sandbox.
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -652,7 +652,7 @@ func TestATentativeClaimCanStillBeReleased(t *testing.T) {
 	// DeletePod as well would strand that VM until sandboxd's TTL.
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -683,7 +683,7 @@ func TestStartupDropsAClaimTheNodeNoLongerHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_other"}}}
-	p, err := New(Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,7 +701,7 @@ func TestStartupKeepsTheTableWhenTheNodeCannotBeListed(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -712,7 +712,7 @@ func TestStartupKeepsTheTableWhenTheNodeCannotBeListed(t *testing.T) {
 
 func TestCommitWritesOnlyItsOwnTentativeClaim(t *testing.T) {
 	path := t.TempDir() + "/claims.json"
-	p, err := New(Config{StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -754,7 +754,7 @@ func TestAnUnverifiedClaimIsNotAdoptedOrReportedRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -793,7 +793,7 @@ func TestVerificationClearsTheQuarantineForALiveSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -820,7 +820,7 @@ func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -867,7 +867,7 @@ func TestARestartDoesNotClaimOverAnUnverifiedSandbox(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -888,7 +888,7 @@ func TestVerificationLeavesRowsItWasNeverAskedToJudge(t *testing.T) {
 	// Verification exists to settle rows nothing has vouched for. A row this
 	// process created is already known good, and judging it against a listing
 	// taken moments earlier is exactly how a live sandbox loses its record.
-	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -925,7 +925,7 @@ func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
 		t.Fatal(err)
 	}
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -952,7 +952,7 @@ func TestClaimCarriesItsPodKey(t *testing.T) {
 	// sandboxd echoes ClaimRef in its operator index. Without it a claim whose
 	// HTTP response was lost cannot be traced back to the Pod it belongs to.
 	sd := &fakeSandboxd{}
-	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -969,7 +969,7 @@ func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
 	// verifier drops it, and adoption then writes its copy back, a released
 	// sandbox reappears and is published Running.
 	sd := &fakeSandboxd{}
-	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -995,7 +995,7 @@ func TestAbsentTTLAnnotationRequestsTheFullLease(t *testing.T) {
 	// SDK claims — after which the reaper destroys the VM under a pod still
 	// reporting Running. A pod's sandbox lives until the pod is deleted.
 	sd := &fakeSandboxd{}
-	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1010,7 +1010,7 @@ func TestAbsentTTLAnnotationRequestsTheFullLease(t *testing.T) {
 func TestClaimRecordsTheLeaseDeadline(t *testing.T) {
 	want := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
 	sd := &fakeSandboxd{deadline: want.Format(time.RFC3339Nano)}
-	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1024,7 +1024,7 @@ func TestClaimRecordsTheLeaseDeadline(t *testing.T) {
 }
 
 func TestAPodPastItsLeaseIsNotReportedRunning(t *testing.T) {
-	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1056,7 +1056,7 @@ func TestAPodPastItsLeaseIsNotReportedRunning(t *testing.T) {
 func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
 	// Tables written by older builds carry no deadline; that must read as "no
 	// known expiry", not as instantly expired.
-	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1077,7 +1077,7 @@ func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
 func TestLeaseWatchPublishesFailedForAReapedSandbox(t *testing.T) {
 	// An asynchronous provider is never polled: without the watch, the Running
 	// pushed at create time would stand forever after the reaper fires.
-	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1109,7 +1109,7 @@ func TestAnExpiredClaimIsReplacedNotAdopted(t *testing.T) {
 	// The reaper destroyed the VM at the deadline; adopting the row would bind
 	// the replacement pod to a dead sandbox and publish it Running.
 	sd := &fakeSandboxd{}
-	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1143,7 +1143,7 @@ func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
 	}
 	want := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
 	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_live", Deadline: want.Format(time.RFC3339Nano)}}}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1159,7 +1159,7 @@ func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 	sd := &fakeSandboxd{live: []ListedSandbox{{
 		ID: "sb_archived", Deadline: time.Now().Add(6 * time.Hour).Format(time.RFC3339Nano),
 	}}}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1199,7 +1199,7 @@ func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 
 func TestTheWatchPublishesNothingWhenTheNodeCannotBeListed(t *testing.T) {
 	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1222,7 +1222,7 @@ func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
 	// Archived keep-forever rows list with a zero deadline; the claim is alive
 	// and its credential is the only one there is.
 	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_archived"}}}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1246,7 +1246,7 @@ func TestTheWatchDoesNotTerminalizeAReplacementPod(t *testing.T) {
 	// Between the listing and the publication the key can change hands: old Pod
 	// deleted, a new one created with a fresh claim. The expiry belongs to the
 	// old claim; stamping it on the successor would falsely kill it forever.
-	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1399,7 +1399,7 @@ func newTestProvider(t *testing.T, sd *fakeSandboxd, dyn *dynamicfake.FakeDynami
 	if dyn != nil {
 		cfg.Dynamic = dyn
 	}
-	p, err := New(cfg)
+	p, err := New(t.Context(), cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
