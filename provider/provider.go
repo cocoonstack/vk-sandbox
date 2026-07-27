@@ -75,6 +75,11 @@ type Claim struct {
 	// start time, which must not move between reads; a table written by an older
 	// build has none, so the first read after upgrade settles it.
 	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
+	// Deadline is the lease end sandboxd returned for this claim. There is no
+	// renewal anywhere in the stack — the e2b keepalive is record-keeping only —
+	// so past it the reaper destroys the VM and status must stop saying Running.
+	// Zero means unknown (an older table), which reads as no known expiry.
+	Deadline metav1.Time `json:"deadline,omitzero"`
 }
 
 // Config assembles a Provider.

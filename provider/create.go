@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,13 @@ const (
 	// AnnClaimID is written back by the provider: the sandboxd claim id backing
 	// this pod. Identity only — the release token never leaves the node.
 	AnnClaimID = "sandbox.cocoonstack.io/claim-id"
+
+	// defaultClaimTTLSeconds is requested when a pod carries no TTL annotation:
+	// sandboxd's maxTTL. A pod's sandbox lives until the pod is deleted, and
+	// sending 0 would mean sandboxd's own default — five minutes, sized for
+	// ephemeral SDK claims, after which the reaper destroys the VM under a pod
+	// still reporting Running.
+	defaultClaimTTLSeconds = 24 * 60 * 60
 )
 
 func ann(pod *corev1.Pod, key, def string) string {
@@ -88,7 +96,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return err
 	}
 
-	ttl := 0
+	ttl := defaultClaimTTLSeconds
 	if s := ann(pod, AnnTTLSeconds, ""); s != "" {
 		v, err := strconv.Atoi(s)
 		if err != nil || v < 0 {
@@ -114,7 +122,11 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return fmt.Errorf("claim sandbox for %s (template %s): %w", key, spec.Template, err)
 	}
 
-	c := Claim{ID: res.ID, Token: res.Token, Address: res.OwnerAddr, PodUID: string(pod.UID), ClaimedAt: metav1.Now()}
+	c := Claim{
+		ID: res.ID, Token: res.Token, Address: res.OwnerAddr,
+		PodUID: string(pod.UID), ClaimedAt: metav1.Now(),
+		Deadline: parseDeadline(res.Deadline),
+	}
 	p.mu.Lock()
 	p.claims[key] = c
 	p.pods[key] = pod.DeepCopy()
@@ -273,4 +285,17 @@ func claimIP(addr string) string {
 		return host
 	}
 	return addr
+}
+
+// parseDeadline reads the lease deadline sandboxd returns with a claim. Empty or
+// unparsable means unknown, which status treats as no known expiry.
+func parseDeadline(s string) metav1.Time {
+	if s == "" {
+		return metav1.Time{}
+	}
+	ts, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		return metav1.Time{}
+	}
+	return metav1.NewTime(ts)
 }

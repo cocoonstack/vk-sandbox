@@ -36,7 +36,7 @@ verbatim, so one contract spans the L2 claim gateway and this provider.
 | `sandbox.cocoonstack.io/template` | in | sandboxd template axis. **Required** -- `CreatePod` fails without it |
 | `sandbox.cocoonstack.io/net` | in | Claim network axis; empty means the sandboxd default |
 | `sandbox.cocoonstack.io/size` | in | Claim VM size axis; empty means the sandboxd default |
-| `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds; `0` or absent means the sandboxd default. A non-integer or negative value fails the create |
+| `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds. Absent means 86400 — sandboxd clamps to its 24h maximum — because a pod's sandbox lives until the pod is deleted, and sandboxd's own default of five minutes is sized for ephemeral SDK claims. An explicit `0` still selects that sandboxd default. A non-integer or negative value fails the create |
 | `sandbox.cocoonstack.io/claim-id` | out | Written back by the provider: the sandboxd claim id backing the Pod |
 
 The release token is deliberately **not** exposed on the Pod -- it stays in
@@ -73,3 +73,12 @@ through the sandbox SDK and preview URLs.
 
 The full decision table for the last two rows is in
 [Architecture](architecture.md#delete-authorization-pod-deletion-is-not-vm-authority).
+
+## Lease expiry
+
+Nothing in the stack renews a lease — the e2b keepalive is record-keeping
+only — so sandboxd's reaper destroys the microVM at the claim's deadline. The
+provider records the deadline returned with each claim and, once it passes,
+reports the Pod `Failed` with reason `SandboxLeaseExpired` instead of letting a
+dead workload read as Running. The release credential stays valid either way; a
+pod meant to outlive 24 hours needs a renewal mechanism in sandboxd first.

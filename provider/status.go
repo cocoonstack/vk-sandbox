@@ -2,10 +2,15 @@ package provider
 
 import (
 	"context"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+// ReasonLeaseExpired marks a pod whose sandbox lease ended and whose microVM
+// the reaper destroys at that deadline.
+const ReasonLeaseExpired = "SandboxLeaseExpired"
 
 // GetPod serves from the in-memory table — the L0 rule: status reads never
 // round-trip the apiserver or sandboxd.
@@ -48,8 +53,39 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 		st.Phase = corev1.PodPending
 		return st, nil
 	}
+	if !c.Deadline.IsZero() && time.Now().After(c.Deadline.Time) {
+		st := expiredStatus(pod, c)
+		return &st, nil
+	}
 	st := runningStatus(pod, c)
 	return &st, nil
+}
+
+// expiredStatus reports a pod whose sandbox lease has ended. The reaper destroys
+// the VM at the deadline and nothing in the stack renews a lease, so continuing
+// to report Running would hide a dead workload indefinitely.
+func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
+	st := corev1.PodStatus{
+		Phase:     corev1.PodFailed,
+		Reason:    ReasonLeaseExpired,
+		Message:   "sandbox lease ended at " + c.Deadline.Format(time.RFC3339) + "; the microVM is reaped at the deadline",
+		StartTime: &c.ClaimedAt,
+	}
+	for _, ctr := range pod.Spec.Containers {
+		st.ContainerStatuses = append(st.ContainerStatuses, corev1.ContainerStatus{
+			Name: ctr.Name,
+			State: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{
+					ExitCode:   1,
+					Reason:     ReasonLeaseExpired,
+					FinishedAt: c.Deadline,
+				},
+			},
+			Image:   ctr.Image,
+			ImageID: "sandboxd://" + c.ID,
+		})
+	}
+	return st
 }
 
 // runningStatus renders the canonical Running status for a claimed pod: the

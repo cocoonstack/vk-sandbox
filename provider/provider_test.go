@@ -990,6 +990,90 @@ func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
 	}
 }
 
+func TestAbsentTTLAnnotationRequestsTheFullLease(t *testing.T) {
+	// Sending 0 means sandboxd's own default — five minutes, sized for ephemeral
+	// SDK claims — after which the reaper destroys the VM under a pod still
+	// reporting Running. A pod's sandbox lives until the pod is deleted.
+	sd := &fakeSandboxd{}
+	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatal(err)
+	}
+	if sd.lastSpec.TTLSeconds != defaultClaimTTLSeconds {
+		t.Errorf("TTLSeconds = %d, want %d", sd.lastSpec.TTLSeconds, defaultClaimTTLSeconds)
+	}
+}
+
+func TestClaimRecordsTheLeaseDeadline(t *testing.T) {
+	want := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	sd := &fakeSandboxd{deadline: want.Format(time.RFC3339Nano)}
+	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := p.claimFor("ns/p")
+	if !ok || !c.Deadline.Time.Equal(want) {
+		t.Errorf("Deadline = %v ok=%v, want %v", c.Deadline, ok, want)
+	}
+}
+
+func TestAPodPastItsLeaseIsNotReportedRunning(t *testing.T) {
+	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+	p.claims["ns/p"] = Claim{
+		ID: "sb_reaped", Token: "t",
+		ClaimedAt: metav1.NewTime(time.Now().Add(-10 * time.Minute)),
+		Deadline:  metav1.NewTime(time.Now().Add(-5 * time.Minute)),
+	}
+	p.mu.Unlock()
+
+	st, err := p.GetPodStatus(t.Context(), "ns", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Phase == corev1.PodRunning {
+		t.Fatal("a pod whose sandbox lease ended was still reported Running")
+	}
+	if st.Phase != corev1.PodFailed || st.Reason != ReasonLeaseExpired {
+		t.Errorf("phase/reason = %v/%v", st.Phase, st.Reason)
+	}
+	// The lease end must not stop the release credential from working.
+	if _, ok := p.heldClaimFor("ns/p"); !ok {
+		t.Error("the expired claim's credential must stay reachable for release")
+	}
+}
+
+func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
+	// Tables written by older builds carry no deadline; that must read as "no
+	// known expiry", not as instantly expired.
+	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+	p.claims["ns/p"] = Claim{ID: "sb_old", Token: "t", ClaimedAt: metav1.Now()}
+	p.mu.Unlock()
+
+	st, err := p.GetPodStatus(t.Context(), "ns", "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Phase != corev1.PodRunning {
+		t.Errorf("phase = %v, want Running", st.Phase)
+	}
+}
+
 // listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()
@@ -1012,6 +1096,7 @@ type fakeSandboxd struct {
 	claimErr   error
 	releaseErr error
 	lastSpec   sandboxd.ClaimSpec
+	deadline   string
 }
 
 func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
@@ -1024,7 +1109,7 @@ func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandbo
 	f.claims++
 	id := fmt.Sprintf("sb_%06d", f.claims)
 	f.live = append(f.live, ListedSandbox{ID: id})
-	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777"}, nil
+	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777", Deadline: f.deadline}, nil
 }
 
 func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
