@@ -80,5 +80,7 @@ Nothing in the stack renews a lease — the e2b keepalive is record-keeping
 only — so sandboxd's reaper destroys the microVM at the claim's deadline. The
 provider records the deadline returned with each claim and, once it passes,
 reports the Pod `Failed` with reason `SandboxLeaseExpired` instead of letting a
-dead workload read as Running. The release credential stays valid either way; a
-pod meant to outlive 24 hours needs a renewal mechanism in sandboxd first.
+dead workload read as Running. The release credential stays valid either way.
+Pods beyond 24 hours are outside the current contract: leases are fixed at
+claim time by design, and that boundary is reported honestly rather than
+papered over.
