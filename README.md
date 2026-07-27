@@ -83,7 +83,7 @@ summary are documented in [Configuration](docs/configuration.md) and
 ## Development
 
 ```bash
-make all        # fmt-check vet test build
+make all        # deps fmt lint test build
 make race lint
 ```
 

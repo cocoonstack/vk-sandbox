@@ -13,7 +13,7 @@ Thanks for your interest in improving vk-sandbox!
 Go 1.26+ is required.
 
 ```bash
-make all          # fmt-check vet test build
+make all          # deps fmt lint test build
 make race         # unit tests with the race detector
 make lint         # golangci-lint when installed
 make build-linux  # cross-compile the node binary
@@ -24,9 +24,10 @@ make build-linux  # cross-compile the node binary
 - Keep changes focused; unrelated refactors belong in their own PR.
 - Commit messages: a one-line summary, optionally followed by a body that
   explains *why* the change is needed.
-- The six provider contracts in the README (delete authorization, GVR
-  derivation, audit-only orphan GC, stale-UID guard, L0 API hygiene, durable
-  release credentials) are load-bearing and pinned by intent tests. Do not
+- The seven provider contracts in the README (delete authorization, GVR
+  derivation, audit-only orphan GC, stale-UID guard, L0 API hygiene, published
+  lease expiry, durable release credentials) are load-bearing and pinned by
+  intent tests. Do not
   weaken those tests to make a change pass — if a contract must change, argue
   it in the PR description first.
 - CI must be green.
@@ -41,4 +42,4 @@ the work under this repository's license.
 ## License
 
 By contributing you agree that your contributions are licensed under
-[Apache-2.0](LICENSE).
+[AGPL-3.0](LICENSE).
