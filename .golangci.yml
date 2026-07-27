@@ -71,6 +71,10 @@ linters:
         linters:
           - govet
         text: "shadow"
+      # Request targets derive from --sandboxd-addr, fixed at process start
+      # (loopback in deployment); they are not caller-supplied URLs.
+      - linters: [gosec]
+        text: "G704"
 
 formatters:
   enable:
