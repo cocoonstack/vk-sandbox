@@ -76,16 +76,10 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 
 // RunOrphanScan runs OrphanScan on an interval until ctx is done.
 func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			p.OrphanScan(ctx)
-		}
-	}
+	runTicker(ctx, interval, func() bool {
+		p.OrphanScan(ctx)
+		return true
+	})
 }
 
 // RunClaimVerification re-checks the claims table against the node until ctx is
@@ -93,18 +87,10 @@ func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
 // audit an operator may switch off, while this is what lifts a startup
 // quarantine — a claim the node still holds must become usable again.
 func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if p.VerifyClaimsAgainstNode(ctx) && !p.hasQuarantined() {
-				return // the table is vouched for; nothing left to re-check
-			}
-		}
-	}
+	runTicker(ctx, interval, func() bool {
+		// Keep polling until the table is vouched for and nothing is quarantined.
+		return !p.VerifyClaimsAgainstNode(ctx) || p.hasQuarantined()
+	})
 }
 
 // RunLeaseWatch publishes the Failed status of pods whose sandbox lease has
@@ -114,16 +100,10 @@ func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Durat
 // status is deterministic (built from the claim's own timestamps), so pushing
 // it again each tick patches nothing server-side; no fired-marker is needed.
 func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			p.publishExpiredLeases(ctx)
-		}
-	}
+	runTicker(ctx, interval, func() bool {
+		p.publishExpiredLeases(ctx)
+		return true
+	})
 }
 
 // recordVerdict stores this cycle's verdict for a sandbox and logs only a
@@ -193,5 +173,22 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 		out := pod.DeepCopy()
 		out.Status = expiredStatus(out, cand.claim)
 		p.notify(out)
+	}
+}
+
+// runTicker invokes action on an interval until ctx is done or action returns
+// false.
+func runTicker(ctx context.Context, interval time.Duration, action func() bool) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !action() {
+				return
+			}
+		}
 	}
 }

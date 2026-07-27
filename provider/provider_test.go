@@ -485,9 +485,8 @@ func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
 }
 
 func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
-	// runningStatus keeps a zero-value fallback; this pins the invariant that no
-	// production path actually needs it, so the reported start time is always the
-	// real claim time.
+	// runningStatus reports ClaimedAt as the start time with no fallback, so
+	// every claim path must stamp it; this pins that invariant.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: t.TempDir() + "/c.json", Logger: logr.Discard()})
 	if err != nil {
