@@ -98,7 +98,7 @@ written compactly (shown expanded here) because every claim rewrites it:
 | `id` | sandboxd claim id |
 | `token` | Release credential; never leaves the node |
 | `address` | sandboxd `owner_addr` for the claim (`host:port`); the host becomes the Pod IP |
-| `podUID` | UID of the Pod currently bound to the claim (the stale-request guard) |
+| `podUID` | UID of the Pod generation that last held the claim (operator forensics; the stale-request guard reads the in-memory pod table, not this field) |
 | `claimedAt` | When the claim was taken; reported as the Pod start time, which must not move between reads. A table written before this field existed gets it filled in on the next load |
 | `deadline` | The lease end sandboxd returned for this claim. Past it the reaper has destroyed the VM, so the Pod is pushed `Failed`. Absent in tables from older builds; the vouching pass backfills it from the node's listing |
 

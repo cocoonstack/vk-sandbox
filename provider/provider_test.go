@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -220,6 +221,41 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 	}
 	if got := sd.releaseCount(); got != 0 {
 		t.Fatalf("failed-list cycle must not release; releases=%d", got)
+	}
+}
+
+// TestOrphanScanExternalClaimsAndLogDedup pins the #3 contract: a row whose
+// claim_ref this provider does not hold is an apiserver-direct claim — not an
+// orphan candidate — and every verdict (external, orphan, stale) is logged on
+// first sight, not every cycle.
+func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	p := newTestProvider(t, sd, dynWith(t), "")
+	logLines := 0
+	p.log = funcr.New(func(string, string) { logLines++ }, funcr.Options{})
+
+	sd.mu.Lock()
+	sd.live = append(sd.live,
+		ListedSandbox{ID: "sb_ext", ClaimRef: "default/api-direct"},
+		ListedSandbox{ID: "sb_orphan"})
+	sd.mu.Unlock()
+	p.claims["ns1/stale-pod"] = Claim{ID: "sb_stale"}
+
+	for cycle := range 3 {
+		orphans, stale, ok := p.OrphanScan(ctx)
+		if !ok {
+			t.Fatalf("cycle %d: scan failed", cycle)
+		}
+		if len(orphans) != 1 || orphans[0] != "sb_orphan" {
+			t.Fatalf("cycle %d: want orphans [sb_orphan], got %v", cycle, orphans)
+		}
+		if len(stale) != 1 || stale[0] != "ns1/stale-pod" {
+			t.Fatalf("cycle %d: want stale [ns1/stale-pod], got %v", cycle, stale)
+		}
+	}
+	if logLines != 3 {
+		t.Fatalf("verdict log lines = %d, want 3 (one per verdict, not per cycle)", logLines)
 	}
 }
 
@@ -449,9 +485,8 @@ func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
 }
 
 func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
-	// runningStatus keeps a zero-value fallback; this pins the invariant that no
-	// production path actually needs it, so the reported start time is always the
-	// real claim time.
+	// runningStatus reports ClaimedAt as the start time with no fallback, so
+	// every claim path must stamp it; this pins that invariant.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: t.TempDir() + "/c.json", Logger: logr.Discard()})
 	if err != nil {

@@ -126,6 +126,10 @@ type Provider struct {
 	// until the node vouches for it.
 	quarantined map[string]struct{}
 
+	// orphanVerdicts is the previous scan's verdict per sandbox id, used to log
+	// each verdict transition once. Touched only by the scan goroutine.
+	orphanVerdicts map[string]string
+
 	// saveMu orders snapshot-to-rename as one step. Without it concurrent pod
 	// creates can rename an older snapshot last, dropping a release credential
 	// and leaking its microVM until sandboxd's TTL reaps it.

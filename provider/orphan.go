@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+const (
+	verdictExternal = "external"
+	verdictOrphan   = "orphan"
+	verdictStale    = "stale"
+)
+
 // OrphanScan compares the node's live sandboxes against the claims table.
 // It is strictly audit-only, carrying over two hard-won vk-cocoon rules:
 //
@@ -15,8 +21,9 @@ import (
 //     "zero known sandboxes" once deleted every active VM's state in one
 //     sweep (2026-05-15); on failure the whole cycle is skipped.
 //
-// Returns (orphans, staleClaims, ok): sandboxd rows without a claim, and claim
-// entries whose sandbox is gone (reaped at TTL or released elsewhere).
+// Returns (orphans, staleClaims, ok): sandboxd rows with neither a local claim
+// nor a claim_ref (an unheld claim_ref marks an apiserver-direct claim, not an
+// orphan), and claim entries whose sandbox is gone.
 func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaims []string, ok bool) {
 	if p.lister == nil {
 		return nil, nil, false
@@ -39,35 +46,40 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 	}
 	p.mu.RUnlock()
 
+	verdicts := make(map[string]string, len(listed))
 	for _, s := range listed {
-		if _, ok := claimed[s.ID]; !ok {
-			orphans = append(orphans, s.ID)
-			p.log.Info("possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
-				"sandbox", s.ID)
+		if _, ok := claimed[s.ID]; ok {
+			continue
 		}
+		if s.ClaimRef != "" {
+			p.recordVerdict(verdicts, s.ID, verdictExternal,
+				"sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate",
+				"sandbox", s.ID, "claimRef", s.ClaimRef)
+			continue
+		}
+		orphans = append(orphans, s.ID)
+		p.recordVerdict(verdicts, s.ID, verdictOrphan,
+			"possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
+			"sandbox", s.ID)
 	}
 	for id, key := range claimed {
 		if _, ok := live[id]; !ok {
 			staleClaims = append(staleClaims, key)
-			p.log.Info("claim references a sandbox no longer on the node (TTL reap or external release)",
+			p.recordVerdict(verdicts, id, verdictStale,
+				"claim references a sandbox no longer on the node (TTL reap or external release)",
 				"pod", key, "sandbox", id)
 		}
 	}
+	p.orphanVerdicts = verdicts
 	return orphans, staleClaims, true
 }
 
 // RunOrphanScan runs OrphanScan on an interval until ctx is done.
 func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			p.OrphanScan(ctx)
-		}
-	}
+	runTicker(ctx, interval, func() bool {
+		p.OrphanScan(ctx)
+		return true
+	})
 }
 
 // RunClaimVerification re-checks the claims table against the node until ctx is
@@ -75,18 +87,10 @@ func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
 // audit an operator may switch off, while this is what lifts a startup
 // quarantine — a claim the node still holds must become usable again.
 func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			if p.VerifyClaimsAgainstNode(ctx) && !p.hasQuarantined() {
-				return // the table is vouched for; nothing left to re-check
-			}
-		}
-	}
+	runTicker(ctx, interval, func() bool {
+		// Keep polling until the table is vouched for and nothing is quarantined.
+		return !p.VerifyClaimsAgainstNode(ctx) || p.hasQuarantined()
+	})
 }
 
 // RunLeaseWatch publishes the Failed status of pods whose sandbox lease has
@@ -96,15 +100,19 @@ func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Durat
 // status is deterministic (built from the claim's own timestamps), so pushing
 // it again each tick patches nothing server-side; no fired-marker is needed.
 func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			p.publishExpiredLeases(ctx)
-		}
+	runTicker(ctx, interval, func() bool {
+		p.publishExpiredLeases(ctx)
+		return true
+	})
+}
+
+// recordVerdict stores this cycle's verdict for a sandbox and logs only a
+// transition (#3): re-logging an unchanged verdict every cycle buried genuine
+// orphans in permanent noise.
+func (p *Provider) recordVerdict(verdicts map[string]string, id, verdict, msg string, kv ...any) {
+	verdicts[id] = verdict
+	if p.orphanVerdicts[id] != verdict {
+		p.log.Info(msg, kv...)
 	}
 }
 
@@ -165,5 +173,22 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 		out := pod.DeepCopy()
 		out.Status = expiredStatus(out, cand.claim)
 		p.notify(out)
+	}
+}
+
+// runTicker invokes action on an interval until ctx is done or action returns
+// false.
+func runTicker(ctx context.Context, interval time.Duration, action func() bool) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			if !action() {
+				return
+			}
+		}
 	}
 }

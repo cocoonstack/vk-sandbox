@@ -5,7 +5,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // ReasonLeaseExpired marks a pod whose sandbox lease ended and whose microVM
@@ -89,15 +88,11 @@ func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 // sandbox VM address as the pod IP and one synthetic ready container per spec
 // container (the workload runs inside the microVM, not as containers).
 func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
-	started := c.ClaimedAt
-	if started.IsZero() {
-		started = metav1.Now()
-	}
 	ip := claimIP(c.Address)
 	st := corev1.PodStatus{
 		Phase:     corev1.PodRunning,
 		HostIP:    ip,
-		StartTime: &started,
+		StartTime: &c.ClaimedAt,
 		Conditions: []corev1.PodCondition{
 			{Type: corev1.PodInitialized, Status: corev1.ConditionTrue},
 			{Type: corev1.PodReady, Status: corev1.ConditionTrue},
@@ -113,7 +108,7 @@ func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 			Name:  ctr.Name,
 			Ready: true,
 			State: corev1.ContainerState{
-				Running: &corev1.ContainerStateRunning{StartedAt: started},
+				Running: &corev1.ContainerStateRunning{StartedAt: c.ClaimedAt},
 			},
 			Image:   ctr.Image,
 			ImageID: "sandboxd://" + c.ID,
