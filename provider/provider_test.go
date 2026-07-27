@@ -29,6 +29,8 @@ var (
 	sandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
 
 	errTestReleaseFailed = errors.New("sandboxd unreachable")
+
+	errTestCapacity = fmt.Errorf("node busy: %w", sandboxd.ErrNodeAtCapacity)
 )
 
 // TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
@@ -1074,6 +1076,83 @@ func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
 	}
 }
 
+func TestARetriedCreateTakesBackAClaimWhoseResponseWasLost(t *testing.T) {
+	// sandboxd persists the claim before writing the response, so a transport
+	// failure leaves a live sandbox whose token nobody received. The retry must
+	// release it — by ClaimRef linkage, with the root token — before claiming
+	// again, or the pod ends up with two sandboxes.
+	sd := &fakeSandboxd{claimErr: errors.New("connection reset")}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, NodeToken: "root-tok", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err == nil {
+		t.Fatal("the failed claim reported success")
+	}
+
+	// The lost attempt had committed: the node lists it under our pod key.
+	sd.mu.Lock()
+	sd.claimErr = nil
+	sd.live = []ListedSandbox{{ID: "sb_lost", ClaimRef: "ns/p"}, {ID: "sb_other", ClaimRef: "ns/other"}}
+	sd.mu.Unlock()
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(sd.releases) != 1 || sd.releases[0] != "sb_lost" {
+		t.Fatalf("releases = %v, want exactly the lost claim", sd.releases)
+	}
+	if sd.releaseTokens[0] != "root-tok" {
+		t.Errorf("release used token %q, want the root token", sd.releaseTokens[0])
+	}
+	if _, ok := p.claimFor("ns/p"); !ok {
+		t.Error("the retry did not deliver a fresh claim")
+	}
+}
+
+func TestACleanCapacityMissDoesNotSuspectTheKey(t *testing.T) {
+	// A typed 429 means sandboxd answered: no claim committed, so the retry must
+	// not pay a node listing or release anything.
+	sd := &fakeSandboxd{claimErr: errTestCapacity}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, NodeToken: "root-tok", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", ""))
+
+	sd.mu.Lock()
+	sd.claimErr = nil
+	sd.mu.Unlock()
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(sd.releases) != 0 {
+		t.Errorf("a clean capacity miss triggered recovery releases: %v", sd.releases)
+	}
+}
+
+func TestASuspectedKeyRefusesToClaimBlind(t *testing.T) {
+	// Suspicion plus an unlistable node means claiming again could duplicate; the
+	// pod stays pending instead.
+	sd := &fakeSandboxd{claimErr: errors.New("connection reset")}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, NodeToken: "root-tok", Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", ""))
+
+	sd.mu.Lock()
+	sd.claimErr = nil
+	sd.listErr = errTestReleaseFailed
+	sd.mu.Unlock()
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err == nil {
+		t.Fatal("a suspected key claimed again without reconciling against the node")
+	}
+	if sd.claims != 0 {
+		t.Errorf("claims = %d, want 0", sd.claims)
+	}
+}
+
 // listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()
@@ -1097,6 +1176,8 @@ type fakeSandboxd struct {
 	releaseErr error
 	lastSpec   sandboxd.ClaimSpec
 	deadline   string
+
+	releaseTokens []string
 }
 
 func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
@@ -1112,13 +1193,14 @@ func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandbo
 	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777", Deadline: f.deadline}, nil
 }
 
-func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
+func (f *fakeSandboxd) Release(_ context.Context, id, token string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.releaseErr != nil {
 		return f.releaseErr
 	}
 	f.releases = append(f.releases, id)
+	f.releaseTokens = append(f.releaseTokens, token)
 	return nil
 }
 

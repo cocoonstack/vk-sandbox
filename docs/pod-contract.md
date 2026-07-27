@@ -74,6 +74,16 @@ through the sandbox SDK and preview URLs.
 The full decision table for the last two rows is in
 [Architecture](architecture.md#delete-authorization-pod-deletion-is-not-vm-authority).
 
+## Lost claim responses
+
+sandboxd persists a claim before writing the HTTP response, so a transport
+failure can leave a live sandbox whose token nobody received. The provider
+marks such a key suspect; the next create for it reconciles against the node's
+index first — every claim carries its pod key as `claim_ref` — releasing the
+stray by id with the root token before claiming again. While the node cannot
+be listed, a suspected key refuses to claim rather than risk giving one pod
+two sandboxes.
+
 ## Lease expiry
 
 Nothing in the stack renews a lease — the e2b keepalive is record-keeping

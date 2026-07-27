@@ -87,6 +87,9 @@ type Config struct {
 	NodeName string
 	Client   SandboxdClient
 	Lister   Lister
+	// NodeToken is the sandboxd root api token. It authorizes the operator
+	// release-by-id used to take back a claim whose HTTP response was lost.
+	NodeToken string
 	// Dynamic reads owner CRs for the destroy-authorization quorum. nil means
 	// owner state is unverifiable and every guarded delete preserves.
 	Dynamic dynamic.Interface
@@ -101,6 +104,7 @@ type Provider struct {
 	nodeName  string
 	client    SandboxdClient
 	lister    Lister
+	nodeToken string
 	dyn       dynamic.Interface
 	statePath string
 	log       logr.Logger
@@ -122,6 +126,13 @@ type Provider struct {
 	// until the node vouches for it.
 	quarantined map[string]struct{}
 
+	// suspect holds keys whose last claim attempt failed at the transport layer.
+	// sandboxd persists a claim before writing the response, so such an attempt
+	// may have committed; the next create for the key must reconcile against the
+	// node before claiming again, or the pod ends up with two live sandboxes.
+	// In-memory only: losing it to a crash leaves the stray bounded by its lease.
+	suspect map[string]struct{}
+
 	// saveMu orders snapshot-to-rename as one step. Without it concurrent pod
 	// creates can rename an older snapshot last, dropping a release credential
 	// and leaking its microVM until sandboxd's TTL reaps it.
@@ -134,6 +145,7 @@ func New(cfg Config) (*Provider, error) {
 		nodeName:    cfg.NodeName,
 		client:      cfg.Client,
 		lister:      cfg.Lister,
+		nodeToken:   cfg.NodeToken,
 		dyn:         cfg.Dynamic,
 		statePath:   cfg.StatePath,
 		log:         cfg.Logger,
@@ -141,6 +153,7 @@ func New(cfg Config) (*Provider, error) {
 		claims:      map[string]Claim{},
 		tentative:   map[string]struct{}{},
 		quarantined: map[string]struct{}{},
+		suspect:     map[string]struct{}{},
 	}
 	if err := p.loadState(); err != nil {
 		return nil, err

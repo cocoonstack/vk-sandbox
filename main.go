@@ -177,6 +177,7 @@ func (o *options) run() error {
 		Client:    sdClient,
 		Lister:    lister,
 		Dynamic:   dyn,
+		NodeToken: token,
 		StatePath: o.statePath,
 		Logger:    o.log.WithName("provider"),
 	})
