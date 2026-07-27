@@ -5,6 +5,11 @@ import (
 	"time"
 )
 
+const (
+	verdictExternal = "external"
+	verdictOrphan   = "orphan"
+)
+
 // OrphanScan compares the node's live sandboxes against the claims table.
 // It is strictly audit-only, carrying over two hard-won vk-cocoon rules:
 //
@@ -50,16 +55,16 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 			continue
 		}
 		if s.ClaimRef != "" {
-			verdicts[s.ID] = "external"
-			if p.orphanVerdicts[s.ID] != "external" {
+			verdicts[s.ID] = verdictExternal
+			if p.orphanVerdicts[s.ID] != verdictExternal {
 				p.log.Info("sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate",
 					"sandbox", s.ID, "claimRef", s.ClaimRef)
 			}
 			continue
 		}
 		orphans = append(orphans, s.ID)
-		verdicts[s.ID] = "orphan"
-		if p.orphanVerdicts[s.ID] != "orphan" {
+		verdicts[s.ID] = verdictOrphan
+		if p.orphanVerdicts[s.ID] != verdictOrphan {
 			p.log.Info("possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
 				"sandbox", s.ID)
 		}
