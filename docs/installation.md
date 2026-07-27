@@ -46,7 +46,7 @@ docker build -t vk-sandbox:dev .
 ## Cluster RBAC
 
 Apply the shipped RBAC once per cluster. It creates the `vk-sandbox` service
-account in `cocoon-sandbox-system` and grants:
+account in `sandbox-system` and grants:
 
 - the virtual-kubelet essentials -- nodes and `nodes/status`, pods and
   `pods/status`, events, leases, plus read access to secrets, configmaps, and
@@ -56,7 +56,7 @@ account in `cocoon-sandbox-system` and grants:
 - write access to `nodeinventories` for `--publish-inventory`.
 
 ```bash
-kubectl create namespace cocoon-sandbox-system
+kubectl create namespace sandbox-system
 kubectl apply -f manifests/rbac.yaml
 ```
 
@@ -129,11 +129,11 @@ release credentials survive a Pod restart. Set `VK_NODE_NAME` from
 
 ```bash
 kubectl get node <VK_NODE_NAME> -o wide
-kubectl describe node <VK_NODE_NAME> | grep -E 'Taints|type=|cocoon-sandbox.io/runtime'
+kubectl describe node <VK_NODE_NAME> | grep -E 'Taints|type=|sandbox.cocoonstack.io/runtime'
 ```
 
 The node should be `Ready`, labelled `type=virtual-kubelet` and
-`cocoon-sandbox.io/runtime=sandboxd`, and tainted
+`sandbox.cocoonstack.io/runtime=sandboxd`, and tainted
 `virtual-kubelet.io/provider=sandboxd:NoSchedule`. With
 `--publish-inventory`, one object named after the node appears:
 

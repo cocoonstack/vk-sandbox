@@ -11,7 +11,7 @@ sandbox-operator's `podruntime` mutator runs when a `Sandbox` selects the
 sandboxd runtime (`sandbox.cocoonstack.io/runtime: sandboxd`, or the
 operator's default runtime mode). It:
 
-- adds `nodeSelector: cocoon-sandbox.io/runtime=sandboxd`, the label
+- adds `nodeSelector: sandbox.cocoonstack.io/runtime=sandboxd`, the label
   vk-sandbox advertises by default (`--node-labels`);
 - adds a toleration for `virtual-kubelet.io/provider` with operator `Exists`
   and effect `NoSchedule`, which covers both this node's taint and a

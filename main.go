@@ -82,7 +82,7 @@ func main() {
 		orphanInterval   = flag.Duration("orphan-scan-interval", 60*time.Second, "audit-only orphan scan cadence (0 disables)")
 		publishInventory = flag.Bool("publish-inventory", false, "server-side-apply this node's NodeInventory for the L3 aggregation layer")
 		publishInterval  = flag.Duration("publish-interval", 30*time.Second, "NodeInventory publish cadence")
-		podLabels        = flag.String("node-labels", "cocoon-sandbox.io/runtime=sandboxd", "comma-separated extra node labels key=value")
+		podLabels        = flag.String("node-labels", "sandbox.cocoonstack.io/runtime=sandboxd", "comma-separated extra node labels key=value")
 		showVersion      = flag.Bool("version", false, "print build version and exit")
 	)
 	flag.Parse()

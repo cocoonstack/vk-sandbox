@@ -192,7 +192,7 @@ virtual-kubelet for full cocoon MicroVM Pods. The two providers co-exist on
 one physical node as **two distinct virtual nodes**: different node names,
 different kubelet listen ports (vk-cocoon `:10250`, vk-sandbox `:10260`), and
 different routing labels (`node.kubernetes.io/instance-type=virtual-node` for
-vk-cocoon, `cocoon-sandbox.io/runtime=sandboxd` here). Both carry the
+vk-cocoon, `sandbox.cocoonstack.io/runtime=sandboxd` here). Both carry the
 `virtual-kubelet.io/provider` taint, which the operator's shared `Exists`
 toleration covers. vk-sandbox can reuse the co-located vk-cocoon kubelet
 certificate when it is readable, and self-signs otherwise, so its API surface

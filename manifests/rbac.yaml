@@ -5,7 +5,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: vk-sandbox
-  namespace: cocoon-sandbox-system
+  namespace: sandbox-system
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -53,4 +53,4 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: vk-sandbox
-    namespace: cocoon-sandbox-system
+    namespace: sandbox-system

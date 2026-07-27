@@ -24,7 +24,7 @@ environment.
 | `--orphan-scan-interval` | -- | `60s` | Audit-only orphan scan cadence; `0` disables the scan |
 | `--publish-inventory` | -- | `false` | Server-side-apply this node's `NodeInventory` for the L3 aggregation layer |
 | `--publish-interval` | -- | `30s` | `NodeInventory` publish cadence |
-| `--node-labels` | -- | `cocoon-sandbox.io/runtime=sandboxd` | Comma-separated extra node labels, `key=value` |
+| `--node-labels` | -- | `sandbox.cocoonstack.io/runtime=sandboxd` | Comma-separated extra node labels, `key=value` |
 
 `KUBECONFIG` is read only when in-cluster configuration is unavailable: the
 binary tries the in-cluster service-account config first and falls back to the
