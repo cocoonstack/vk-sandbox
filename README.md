@@ -67,7 +67,12 @@ pinned by intent tests:
    generation's UID are ignored.
 5. **L0 API hygiene.** Status reads are served from the provider's own table;
    no control-loop LIST hits the apiserver.
-6. **Release credentials survive restarts.** The claim table (sandbox id +
+6. **Lease expiry is published, never discovered.** Leases are fixed at claim
+   time and the reaper destroys the VM at the deadline; a watch pushes the Pod
+   `Failed` then, because virtual-kubelet never polls an async provider and a
+   dead workload must not keep reading as Running.
+
+7. **Release credentials survive restarts.** The claim table (sandbox id +
    release token) persists to a 0600 state file; a provider restart keeps the
    authority to tear down exactly what it delivered.
 

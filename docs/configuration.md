@@ -86,7 +86,8 @@ written compactly (shown expanded here) because every claim rewrites it:
       "token": "...",
       "address": "10.0.0.5:7777",
       "podUID": "6f1c...",
-      "claimedAt": "2026-07-27T02:15:00Z"
+      "claimedAt": "2026-07-27T02:15:00Z",
+      "deadline": "2026-07-28T02:15:00Z"
     }
   }
 }
@@ -99,6 +100,7 @@ written compactly (shown expanded here) because every claim rewrites it:
 | `address` | sandboxd `owner_addr` for the claim (`host:port`); the host becomes the Pod IP |
 | `podUID` | UID of the Pod currently bound to the claim (the stale-request guard) |
 | `claimedAt` | When the claim was taken; reported as the Pod start time, which must not move between reads. A table written before this field existed gets it filled in on the next load |
+| `deadline` | The lease end sandboxd returned for this claim. Past it the reaper has destroyed the VM, so the Pod is pushed `Failed`. Absent in tables from older builds; the vouching pass backfills it from the node's listing |
 
 It is written with a tmp-file + atomic rename at mode `0600`, its directory
 created at `0700`, and reloaded on startup. Concurrent Pod creates serialize

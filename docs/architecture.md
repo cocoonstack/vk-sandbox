@@ -104,6 +104,17 @@ Running until a later listing vouches for them. A verification loop, independent
 that switching the audit off cannot strand them, lifts the quarantine as soon
 as a listing succeeds and then stops.
 
+## Leases
+
+Every claim carries a lease fixed at claim time — 24 hours by default, the
+`ttl-seconds` annotation to override — and nothing in the stack renews one.
+sandboxd's reaper destroys the VM at the deadline, so the provider records the
+deadline returned with each claim (persisted with it) and a small watch pushes
+the Pod `Failed` once it passes. Pushed, not polled: implementing `NotifyPods`
+makes this an asynchronous provider, and virtual-kubelet installs no status
+poller for those — a status that is not published does not exist. Adoption
+refuses a row past its deadline; the fresh claim replaces it.
+
 ## Audit-only orphan scan
 
 `--orphan-scan-interval` runs a background comparison of sandboxd's live index
