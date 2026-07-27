@@ -1177,7 +1177,7 @@ func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 	default:
 	}
 	c, _ := p.heldClaimFor("ns/p")
-	if !c.Deadline.Time.After(time.Now()) {
+	if !c.Deadline.After(time.Now()) {
 		t.Fatalf("the node's lease was not adopted: %v", c.Deadline)
 	}
 
