@@ -14,13 +14,9 @@ import (
 	"time"
 )
 
-// selfSignedCert generates an in-memory self-signed TLS certificate for the
-// kubelet API server when the node carries no reusable cert. virtual-kubelet
-// only serves the kubelet API (logs/exec/stats) over TLS, so a self-signed cert
-// keeps every node's API surface uniform without depending on a co-located
-// vk-cocoon's certificate. The apiserver connects to this endpoint with
-// InsecureSkipTLSVerify for kubelet-served routes, so a self-signed cert is
-// sufficient; for sandboxes these routes are stubbed regardless.
+// selfSignedCert keeps the kubelet API surface uniform when no reusable cert
+// exists: the apiserver dials kubelet-served routes with InsecureSkipTLSVerify,
+// so self-signed suffices — and for sandboxes those routes are stubbed anyway.
 func selfSignedCert(hosts ...string) (tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

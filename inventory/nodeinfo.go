@@ -27,8 +27,6 @@ type NodeInfoSource interface {
 	NodeInfo(ctx context.Context) (NodeInfo, error)
 }
 
-// sandboxdInfoSource implements NodeInfoSource: a fixed advertise address paired
-// with live warm-pool capacity from sandboxd.
 type sandboxdInfoSource struct {
 	address string
 	info    InfoClient
@@ -41,8 +39,6 @@ func NewNodeInfoSource(address string, info InfoClient) NodeInfoSource {
 	return &sandboxdInfoSource{address: address, info: info}
 }
 
-// NodeInfo reads the node's warm-pool capacity and returns it with the node's
-// advertise address.
 func (s *sandboxdInfoSource) NodeInfo(ctx context.Context) (NodeInfo, error) {
 	pools, err := s.info.Info(ctx)
 	if err != nil {

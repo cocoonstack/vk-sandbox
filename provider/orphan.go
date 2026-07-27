@@ -120,13 +120,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 		if c.Deadline.IsZero() || now.Before(c.Deadline.Time) {
 			continue
 		}
-		if _, pending := p.tentative[key]; pending {
-			continue
-		}
-		if _, unverified := p.quarantined[key]; unverified {
-			continue
-		}
-		if p.pods[key] == nil {
+		if !p.settled(key) || p.pods[key] == nil {
 			continue
 		}
 		candidates = append(candidates, candidate{key: key, claim: c})

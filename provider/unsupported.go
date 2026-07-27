@@ -20,12 +20,10 @@ func (p *Provider) GetContainerLogs(context.Context, string, string, string, api
 	return nil, ErrNotImplemented
 }
 
-// RunInContainer is not served.
 func (p *Provider) RunInContainer(context.Context, string, string, string, []string, api.AttachIO) error {
 	return ErrNotImplemented
 }
 
-// AttachToContainer is not served.
 func (p *Provider) AttachToContainer(context.Context, string, string, string, api.AttachIO) error {
 	return ErrNotImplemented
 }
@@ -35,12 +33,10 @@ func (p *Provider) PortForward(context.Context, string, string, int32, io.ReadWr
 	return ErrNotImplemented
 }
 
-// GetStatsSummary reports an empty summary.
 func (p *Provider) GetStatsSummary(context.Context) (*statsv1alpha1.Summary, error) {
 	return &statsv1alpha1.Summary{}, nil
 }
 
-// GetMetricsResource reports no metric families.
 func (p *Provider) GetMetricsResource(context.Context) ([]*dto.MetricFamily, error) {
 	return nil, nil
 }

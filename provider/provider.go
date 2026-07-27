@@ -96,6 +96,10 @@ type Config struct {
 	Logger    logr.Logger
 }
 
+type stateFile struct {
+	Claims map[string]Claim `json:"claims"`
+}
+
 // Provider implements the virtual-kubelet PodLifecycleHandler over sandboxd.
 type Provider struct {
 	nodeName  string
@@ -162,9 +166,6 @@ func New(cfg Config) (*Provider, error) {
 	return p, nil
 }
 
-func podKey(namespace, name string) string { return namespace + "/" + name }
-
-// NotifyPods stores the kubelet's pod-status callback.
 func (p *Provider) NotifyPods(_ context.Context, notifier func(*corev1.Pod)) {
 	p.mu.Lock()
 	p.notifier = notifier
@@ -180,16 +181,21 @@ func (p *Provider) notify(pod *corev1.Pod) {
 	}
 }
 
+// settled reports whether key's claim is durable and vouched for — neither
+// tentative nor quarantined. Callers hold mu.
+func (p *Provider) settled(key string) bool {
+	_, pending := p.tentative[key]
+	_, unverified := p.quarantined[key]
+	return !pending && !unverified
+}
+
 // claimFor returns the durable claim bound to key. A claim whose credential is
 // not on disk yet is withheld: it can still be rolled back, so nothing may
 // report it Running or adopt it.
 func (p *Provider) claimFor(key string) (Claim, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	if _, pending := p.tentative[key]; pending {
-		return Claim{}, false
-	}
-	if _, unverified := p.quarantined[key]; unverified {
+	if !p.settled(key) {
 		return Claim{}, false
 	}
 	c, ok := p.claims[key]
@@ -228,10 +234,6 @@ func (p *Provider) podUIDIsCurrent(key string, pod *corev1.Pod) bool {
 		return true // nothing tracked: not stale, just unknown
 	}
 	return cur.UID == pod.UID
-}
-
-type stateFile struct {
-	Claims map[string]Claim `json:"claims"`
 }
 
 // loadState restores the claims table after a provider restart so the release
@@ -273,8 +275,9 @@ func (p *Provider) loadState() error {
 // those the node still holds leave quarantine, those it does not are dropped.
 // It deliberately judges nothing else — a row this process created is already
 // known good, and judging it against a listing taken moments earlier is how a
-// live sandbox loses its record. A release whose save failed leaves such a row behind, and reloading
-// it would let a same-key Pod adopt a destroyed sandbox and report it Running.
+// live sandbox loses its record. A release whose save failed leaves such a row
+// behind, and reloading it would let a same-key Pod adopt a destroyed sandbox
+// and report it Running.
 //
 // A failed listing is NOT an empty list — the 2026-05-15 rule — so nothing is
 // dropped when sandboxd cannot be read. Unverified rows stay quarantined
@@ -357,7 +360,6 @@ func (p *Provider) refreshDeadline(key, id string, deadline metav1.Time) {
 	}
 }
 
-// hasQuarantined reports whether any loaded row is still unverified.
 func (p *Provider) hasQuarantined() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -438,3 +440,5 @@ func (p *Provider) write(committing string) error {
 	}
 	return nil
 }
+
+func podKey(namespace, name string) string { return namespace + "/" + name }

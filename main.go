@@ -8,6 +8,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"flag"
@@ -110,8 +111,6 @@ func main() {
 	logger.Info("vk-sandbox exiting")
 }
 
-// options is the resolved flag set, so run reads as a sequence of named steps
-// rather than a 190-line body threading pointers.
 type options struct {
 	nodeName     string
 	nodeIP       string
@@ -135,8 +134,6 @@ type options struct {
 }
 
 func (o *options) run() error {
-	// Empty disables persistence, which is a test-only shape: a node serving real
-	// Pods without a durable claims table leaks a microVM per claim on restart.
 	if o.statePath == "" {
 		return fmt.Errorf("--state-path is required: without it no release credential survives a restart")
 	}
@@ -219,7 +216,6 @@ func (o *options) run() error {
 	return nil
 }
 
-// sandboxdToken reads the node api token, if one was configured.
 func (o *options) sandboxdToken() (string, error) {
 	if o.tokenFile == "" {
 		return "", nil
@@ -231,8 +227,6 @@ func (o *options) sandboxdToken() (string, error) {
 	return strings.TrimSpace(string(b)), nil
 }
 
-// providerFactory returns the nodeutil hook that stamps this node's labels,
-// taint, addresses and advertised capacity before the provider is served.
 func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc {
 	// Advertised capacity is a scheduling budget only — the pod is a placeholder
 	// and sandboxd holds the real microVM. Without it the scheduler sees 0
@@ -269,8 +263,6 @@ func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc
 	}
 }
 
-// nodeOptions builds the virtual-kubelet node options, including the kubelet
-// API TLS material.
 func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOpt, error) {
 	if _, err := listenPort(o.listenAddr); err != nil {
 		return nil, fmt.Errorf("parse --listen-addr: %w", err)
@@ -307,8 +299,6 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	}), nil
 }
 
-// startInventoryPublisher launches the O(nodes) NodeInventory publish loop that
-// feeds the operator's aggregated read and claim-routing paths.
 func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, p *provider.Provider, lister *sandboxdx.ListClient) error {
 	cclient, err := ctrlclient.New(cfg, ctrlclient.Options{})
 	if err != nil {
@@ -327,12 +317,7 @@ func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config,
 	return nil
 }
 
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
+func envOr(key, def string) string { return cmp.Or(os.Getenv(key), def) }
 
 func parseLabels(s string) map[string]string {
 	out := map[string]string{}
@@ -352,15 +337,13 @@ func kubeConfig() (*rest.Config, error) {
 	return clientcmd.BuildConfigFromFlags("", os.Getenv("KUBECONFIG"))
 }
 
-// fileReadable reports whether path exists and is a regular readable file.
 func fileReadable(path string) bool {
-	info, err := os.Stat(path) //nolint:gosec // operator-supplied path
+	info, err := os.Stat(path)
 	return err == nil && info.Mode().IsRegular()
 }
 
-// hostPort returns the "host:port" of a sandboxd base URL with the scheme
-// stripped, the form NodeInventory publishes as the node's claim-routing advertise
-// address. A bare "host:port" (no scheme) is returned unchanged.
+// hostPort strips the scheme off a sandboxd base URL; a bare "host:port" is
+// returned unchanged.
 func hostPort(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {
 		return u.Host
@@ -368,7 +351,6 @@ func hostPort(raw string) string {
 	return strings.TrimRight(raw, "/")
 }
 
-// listenPort extracts the numeric port from a listen address (":10260").
 func listenPort(addr string) (int32, error) {
 	_, portStr, err := net.SplitHostPort(addr)
 	if err != nil {

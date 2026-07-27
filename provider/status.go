@@ -24,7 +24,6 @@ func (p *Provider) GetPod(_ context.Context, namespace, name string) (*corev1.Po
 	return pod.DeepCopy(), nil
 }
 
-// GetPods returns every tracked pod.
 func (p *Provider) GetPods(_ context.Context) ([]*corev1.Pod, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -40,10 +39,8 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 	key := podKey(namespace, name)
 	p.mu.RLock()
 	pod := p.pods[key]
-	_, pending := p.tentative[key]
-	_, unverified := p.quarantined[key]
 	c, hasClaim := p.claims[key]
-	hasClaim = hasClaim && !pending && !unverified
+	hasClaim = hasClaim && p.settled(key)
 	p.mu.RUnlock()
 	if pod == nil {
 		return nil, nil

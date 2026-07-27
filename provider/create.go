@@ -44,16 +44,6 @@ const (
 	defaultClaimTTLSeconds = 24 * 60 * 60
 )
 
-func ann(pod *corev1.Pod, key, def string) string {
-	if pod.Annotations == nil {
-		return def
-	}
-	if v, ok := pod.Annotations[key]; ok && v != "" {
-		return v
-	}
-	return def
-}
-
 // CreatePod claims a hot sandbox from sandboxd for the pod. Two properties
 // carry the decentralized design:
 //
@@ -157,13 +147,7 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	c, ok := p.claims[key]
-	if !ok {
-		return Claim{}, false
-	}
-	if _, pending := p.tentative[key]; pending {
-		return Claim{}, false
-	}
-	if _, unverified := p.quarantined[key]; unverified {
+	if !ok || !p.settled(key) {
 		return Claim{}, false
 	}
 	c.PodUID = string(pod.UID)
@@ -307,6 +291,16 @@ func (p *Provider) pushRunning(pod *corev1.Pod, c Claim) {
 	out.Annotations[AnnClaimID] = c.ID
 	out.Status = runningStatus(out, c)
 	p.notify(out)
+}
+
+func ann(pod *corev1.Pod, key, def string) string {
+	if pod.Annotations == nil {
+		return def
+	}
+	if v, ok := pod.Annotations[key]; ok && v != "" {
+		return v
+	}
+	return def
 }
 
 // claimIP extracts the host of a sandboxd owner_addr ("10.0.0.5:7777").
