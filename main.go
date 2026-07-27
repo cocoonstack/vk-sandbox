@@ -76,6 +76,8 @@ func main() {
 		nodeCPU          = flag.String("node-cpu", envOr("VK_NODE_CPU", "4000"), "advertised node CPU capacity (a scheduling budget; the real resource is sandboxd's)")
 		nodeMem          = flag.String("node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
 		nodePods         = flag.String("node-pods", envOr("VK_NODE_PODS", "2000"), "advertised node max pods")
+		kubeQPS          = flag.Float64("kube-api-qps", 200, "client-go QPS for the kubernetes clients (status pushes, delete authorization, inventory publish)")
+		kubeBurst        = flag.Int("kube-api-burst", 400, "client-go burst on top of --kube-api-qps")
 		sandboxdURL      = flag.String("sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
 		sandboxdAddr     = flag.String("sandboxd-advertise-addr", envOr("SANDBOXD_ADVERTISE_ADDR", ""), "sandboxd advertise address (host:port) published in NodeInventory for claim routing; defaults to the host:port of --sandboxd-url")
 		tokenFile        = flag.String("sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
@@ -102,7 +104,8 @@ func main() {
 		statePath: *statePath, podLabels: *podLabels,
 		orphanInterval: *orphanInterval, publishInterval: *publishInterval,
 		publishInventory: *publishInventory,
-		log:              logger,
+		kubeQPS:          float32(*kubeQPS), kubeBurst: *kubeBurst,
+		log: logger,
 	}
 	if err := o.run(); err != nil {
 		logger.Error(err, "vk-sandbox exited")
@@ -129,6 +132,8 @@ type options struct {
 	orphanInterval   time.Duration
 	publishInterval  time.Duration
 	publishInventory bool
+	kubeQPS          float32
+	kubeBurst        int
 
 	log logr.Logger
 }
@@ -145,6 +150,10 @@ func (o *options) run() error {
 	if err != nil {
 		return fmt.Errorf("kubernetes client config: %w", err)
 	}
+	// client-go defaults to QPS=5/Burst=10, which queues ~400s of client-side
+	// throttling when the advertised 2000 pods push status at once (#1).
+	cfg.QPS = o.kubeQPS
+	cfg.Burst = o.kubeBurst
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return fmt.Errorf("kubernetes clientset: %w", err)
