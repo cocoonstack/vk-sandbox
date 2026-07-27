@@ -77,20 +77,20 @@ The full decision table for the last two rows is in
 ## Lost claim responses
 
 sandboxd persists a claim before writing the HTTP response, so a transport
-failure can leave a live sandbox whose token nobody received. The provider
-marks such a key suspect; the next create for it reconciles against the node's
-index first — every claim carries its pod key as `claim_ref` — releasing the
-stray by id with the root token before claiming again. While the node cannot
-be listed, a suspected key refuses to claim rather than risk giving one pod
-two sandboxes.
+failure can leave a live sandbox whose token nobody received. sandboxd is on
+loopback, making that a process-death-class rarity, and the stray is bounded
+by its lease and logged by the orphan scan — so there is deliberately no
+recovery machinery for it. The claim still carries the pod key as `claim_ref`,
+which is what lets an operator trace such a stray to the Pod it was for.
 
 ## Lease expiry
 
 Nothing in the stack renews a lease — the e2b keepalive is record-keeping
 only — so sandboxd's reaper destroys the microVM at the claim's deadline. The
 provider records the deadline returned with each claim and, once it passes,
-reports the Pod `Failed` with reason `SandboxLeaseExpired` instead of letting a
-dead workload read as Running. The release credential stays valid either way.
+pushes the Pod `Failed` with reason `SandboxLeaseExpired` instead of letting a
+dead workload read as Running — pushed, because virtual-kubelet never polls an
+asynchronous provider, so only a published status exists. The release credential stays valid either way.
 Pods beyond 24 hours are outside the current contract: leases are fixed at
 claim time by design, and that boundary is reported honestly rather than
 papered over.

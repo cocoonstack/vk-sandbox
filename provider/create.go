@@ -117,19 +117,8 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return fmt.Errorf("pod %s: missing %s annotation", key, AnnTemplate)
 	}
 
-	if err := p.reclaimLostPredecessor(ctx, key); err != nil {
-		return err
-	}
-
 	res, err := p.client.Claim(ctx, spec)
 	if err != nil {
-		if isTransportAmbiguous(err) {
-			// sandboxd persists a claim before writing the response, so this
-			// attempt may have committed; the retry must reconcile first.
-			p.mu.Lock()
-			p.suspect[key] = struct{}{}
-			p.mu.Unlock()
-		}
 		return fmt.Errorf("claim sandbox for %s (template %s): %w", key, spec.Template, err)
 	}
 
@@ -172,6 +161,12 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 		return Claim{}, false
 	}
 	if _, unverified := p.quarantined[key]; unverified {
+		return Claim{}, false
+	}
+	// The reaper destroyed this VM at its deadline; binding a pod to it would
+	// publish Running for a dead sandbox. The fresh claim below replaces the
+	// row — its credential authorizes nothing anymore.
+	if !c.Deadline.IsZero() && time.Now().After(c.Deadline.Time) {
 		return Claim{}, false
 	}
 	c.PodUID = string(pod.UID)
@@ -296,51 +291,6 @@ func claimIP(addr string) string {
 		return host
 	}
 	return addr
-}
-
-// reclaimLostPredecessor settles a claim attempt whose response was lost: the
-// node may hold a live sandbox claimed under this pod key whose token nobody
-// ever received. Claiming again without taking it back would give one pod two
-// sandboxes, the first stranded for its whole lease. The node's own index is
-// the arbiter — each claim carries its pod key as ClaimRef — and the root
-// token authorizes the release by id.
-func (p *Provider) reclaimLostPredecessor(ctx context.Context, key string) error {
-	p.mu.RLock()
-	_, suspected := p.suspect[key]
-	p.mu.RUnlock()
-	if !suspected || p.lister == nil {
-		return nil
-	}
-
-	listed, err := p.lister.ListSandboxes(ctx)
-	if err != nil {
-		return fmt.Errorf("pod %s: a previous claim attempt may have committed and sandboxd cannot be listed; refusing to claim again: %w", key, err)
-	}
-	for _, row := range listed {
-		if row.ClaimRef != key {
-			continue
-		}
-		if err := p.client.Release(ctx, row.ID, p.nodeToken); err != nil {
-			var he *sandboxd.HTTPError
-			if !errors.As(err, &he) || he.StatusCode != 404 {
-				return fmt.Errorf("pod %s: could not take back lost claim %s: %w", key, row.ID, err)
-			}
-		}
-		p.log.Info("released a claim whose response was lost before reclaiming", "pod", key, "claim", row.ID)
-	}
-	p.mu.Lock()
-	delete(p.suspect, key)
-	p.mu.Unlock()
-	return nil
-}
-
-// isTransportAmbiguous reports whether a claim error leaves the outcome unknown.
-// A typed capacity miss or any HTTP status means sandboxd answered — the claim
-// did not commit; anything else died in transport after the request may have
-// been processed.
-func isTransportAmbiguous(err error) bool {
-	var he *sandboxd.HTTPError
-	return !errors.Is(err, sandboxd.ErrNodeAtCapacity) && !errors.As(err, &he)
 }
 
 // parseDeadline reads the lease deadline sandboxd returns with a claim. Empty or

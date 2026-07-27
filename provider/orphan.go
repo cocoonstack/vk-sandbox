@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 // OrphanScan compares the node's live sandboxes against the claims table.
@@ -86,5 +88,52 @@ func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Durat
 				return // the table is vouched for; nothing left to re-check
 			}
 		}
+	}
+}
+
+// RunLeaseWatch publishes the Failed status of pods whose sandbox lease has
+// ended. It exists because implementing NotifyPods makes this an asynchronous
+// provider — virtual-kubelet then never polls GetPodStatus, so a status pushed
+// as Running would stand forever after the reaper destroys the VM. The expired
+// status is deterministic (built from the claim's own timestamps), so pushing
+// it again each tick patches nothing server-side; no fired-marker is needed.
+func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			p.publishExpiredLeases()
+		}
+	}
+}
+
+func (p *Provider) publishExpiredLeases() {
+	now := time.Now()
+	var expired []*corev1.Pod
+	p.mu.RLock()
+	for key, c := range p.claims {
+		if c.Deadline.IsZero() || now.Before(c.Deadline.Time) {
+			continue
+		}
+		if _, pending := p.tentative[key]; pending {
+			continue
+		}
+		if _, unverified := p.quarantined[key]; unverified {
+			continue
+		}
+		pod := p.pods[key]
+		if pod == nil {
+			continue
+		}
+		out := pod.DeepCopy()
+		out.Status = expiredStatus(out, c)
+		expired = append(expired, out)
+	}
+	p.mu.RUnlock()
+	for _, pod := range expired {
+		p.notify(pod)
 	}
 }

@@ -56,6 +56,10 @@ const (
 	// against the node. It stops once everything is vouched for.
 	claimVerifyInterval = 15 * time.Second
 
+	// leaseWatchInterval bounds how stale a reaped sandbox's Running status can
+	// stay; leases run for hours, so half a minute of slop is immaterial.
+	leaseWatchInterval = 30 * time.Second
+
 	// TaintKey marks the virtual node; the operator's runtime mutator adds the
 	// matching toleration to sandbox pods it routes here.
 	TaintKey = "virtual-kubelet.io/provider"
@@ -177,7 +181,6 @@ func (o *options) run() error {
 		Client:    sdClient,
 		Lister:    lister,
 		Dynamic:   dyn,
-		NodeToken: token,
 		StatePath: o.statePath,
 		Logger:    o.log.WithName("provider"),
 	})
@@ -200,6 +203,9 @@ func (o *options) run() error {
 	// Independent of the audit scan: a startup that could not reach sandboxd
 	// leaves claims unusable until a listing vouches for them.
 	go p.RunClaimVerification(ctx, claimVerifyInterval)
+	// virtual-kubelet never polls an asynchronous provider, so lease expiry
+	// must be pushed or a reaped sandbox stays Running forever.
+	go p.RunLeaseWatch(ctx, leaseWatchInterval)
 	if o.publishInventory {
 		if err := o.startInventoryPublisher(ctx, cfg, p, lister); err != nil {
 			return err

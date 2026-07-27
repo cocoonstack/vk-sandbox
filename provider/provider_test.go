@@ -29,8 +29,6 @@ var (
 	sandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
 
 	errTestReleaseFailed = errors.New("sandboxd unreachable")
-
-	errTestCapacity = fmt.Errorf("node busy: %w", sandboxd.ErrNodeAtCapacity)
 )
 
 // TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
@@ -1076,80 +1074,82 @@ func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
 	}
 }
 
-func TestARetriedCreateTakesBackAClaimWhoseResponseWasLost(t *testing.T) {
-	// sandboxd persists the claim before writing the response, so a transport
-	// failure leaves a live sandbox whose token nobody received. The retry must
-	// release it — by ClaimRef linkage, with the root token — before claiming
-	// again, or the pod ends up with two sandboxes.
-	sd := &fakeSandboxd{claimErr: errors.New("connection reset")}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, NodeToken: "root-tok", Logger: logr.Discard()})
+func TestLeaseWatchPublishesFailedForAReapedSandbox(t *testing.T) {
+	// An asynchronous provider is never polled: without the watch, the Running
+	// pushed at create time would stand forever after the reaper fires.
+	p, err := New(Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err == nil {
-		t.Fatal("the failed claim reported success")
-	}
+	got := make(chan *corev1.Pod, 8)
+	p.NotifyPods(t.Context(), func(pod *corev1.Pod) { got <- pod })
 
-	// The lost attempt had committed: the node lists it under our pod key.
-	sd.mu.Lock()
-	sd.claimErr = nil
-	sd.live = []ListedSandbox{{ID: "sb_lost", ClaimRef: "ns/p"}, {ID: "sb_other", ClaimRef: "ns/other"}}
-	sd.mu.Unlock()
+	p.mu.Lock()
+	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+	p.claims["ns/p"] = Claim{
+		ID: "sb_reaped", Token: "t",
+		ClaimedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+		Deadline:  metav1.NewTime(time.Now().Add(-time.Hour)),
+	}
+	p.mu.Unlock()
 
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
-		t.Fatalf("retry: %v", err)
-	}
-	if len(sd.releases) != 1 || sd.releases[0] != "sb_lost" {
-		t.Fatalf("releases = %v, want exactly the lost claim", sd.releases)
-	}
-	if sd.releaseTokens[0] != "root-tok" {
-		t.Errorf("release used token %q, want the root token", sd.releaseTokens[0])
-	}
-	if _, ok := p.claimFor("ns/p"); !ok {
-		t.Error("the retry did not deliver a fresh claim")
+	go p.RunLeaseWatch(t.Context(), 5*time.Millisecond)
+
+	select {
+	case pod := <-got:
+		if pod.Status.Phase != corev1.PodFailed || pod.Status.Reason != ReasonLeaseExpired {
+			t.Fatalf("published %v/%v, want Failed/%s", pod.Status.Phase, pod.Status.Reason, ReasonLeaseExpired)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("lease expiry was never published")
 	}
 }
 
-func TestACleanCapacityMissDoesNotSuspectTheKey(t *testing.T) {
-	// A typed 429 means sandboxd answered: no claim committed, so the retry must
-	// not pay a node listing or release anything.
-	sd := &fakeSandboxd{claimErr: errTestCapacity}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, NodeToken: "root-tok", Logger: logr.Discard()})
+func TestAnExpiredClaimIsReplacedNotAdopted(t *testing.T) {
+	// The reaper destroyed the VM at the deadline; adopting the row would bind
+	// the replacement pod to a dead sandbox and publish it Running.
+	sd := &fakeSandboxd{}
+	p, err := New(Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", ""))
-
-	sd.mu.Lock()
-	sd.claimErr = nil
-	sd.mu.Unlock()
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
-		t.Fatalf("retry: %v", err)
+	p.mu.Lock()
+	p.claims["ns/p"] = Claim{
+		ID: "sb_reaped", Token: "t",
+		ClaimedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+		Deadline:  metav1.NewTime(time.Now().Add(-time.Hour)),
 	}
-	if len(sd.releases) != 0 {
-		t.Errorf("a clean capacity miss triggered recovery releases: %v", sd.releases)
+	p.mu.Unlock()
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if sd.claims != 1 {
+		t.Fatalf("claims = %d, want a fresh claim", sd.claims)
+	}
+	c, ok := p.claimFor("ns/p")
+	if !ok || c.ID == "sb_reaped" {
+		t.Fatalf("claim = %+v ok=%v, want the reaped row replaced", c, ok)
 	}
 }
 
-func TestASuspectedKeyRefusesToClaimBlind(t *testing.T) {
-	// Suspicion plus an unlistable node means claiming again could duplicate; the
-	// pod stays pending instead.
-	sd := &fakeSandboxd{claimErr: errors.New("connection reset")}
-	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, NodeToken: "root-tok", Logger: logr.Discard()})
+func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
+	// A table from a build that predates Deadline reads as never-expiring; the
+	// node's listing carries the lease end, so the vouching pass settles it.
+	path := t.TempDir() + "/claims.json"
+	legacy := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
+	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_live", Deadline: want.Format(time.RFC3339Nano)}}}
+	p, err := New(Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", ""))
-
-	sd.mu.Lock()
-	sd.claimErr = nil
-	sd.listErr = errTestReleaseFailed
-	sd.mu.Unlock()
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err == nil {
-		t.Fatal("a suspected key claimed again without reconciling against the node")
-	}
-	if sd.claims != 0 {
-		t.Errorf("claims = %d, want 0", sd.claims)
+	c, ok := p.claimFor("ns/p")
+	if !ok || !c.Deadline.Time.Equal(want) {
+		t.Fatalf("Deadline = %v ok=%v, want %v", c.Deadline, ok, want)
 	}
 }
 
@@ -1176,8 +1176,6 @@ type fakeSandboxd struct {
 	releaseErr error
 	lastSpec   sandboxd.ClaimSpec
 	deadline   string
-
-	releaseTokens []string
 }
 
 func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
@@ -1193,14 +1191,13 @@ func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandbo
 	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777", Deadline: f.deadline}, nil
 }
 
-func (f *fakeSandboxd) Release(_ context.Context, id, token string) error {
+func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.releaseErr != nil {
 		return f.releaseErr
 	}
 	f.releases = append(f.releases, id)
-	f.releaseTokens = append(f.releaseTokens, token)
 	return nil
 }
 
