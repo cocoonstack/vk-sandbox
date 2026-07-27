@@ -15,8 +15,10 @@ import (
 //     "zero known sandboxes" once deleted every active VM's state in one
 //     sweep (2026-05-15); on failure the whole cycle is skipped.
 //
-// Returns (orphans, staleClaims, ok): sandboxd rows without a claim, and claim
-// entries whose sandbox is gone (reaped at TTL or released elsewhere).
+// Returns (orphans, staleClaims, ok): sandboxd rows with neither a local claim
+// nor a claim_ref (a claim_ref this provider does not hold means an
+// apiserver-direct claim — externally owned, not an orphan candidate), and
+// claim entries whose sandbox is gone (reaped at TTL or released elsewhere).
 func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaims []string, ok bool) {
 	if p.lister == nil {
 		return nil, nil, false
@@ -39,13 +41,30 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 	}
 	p.mu.RUnlock()
 
+	// Verdicts are logged on first sight only (#3): the apiserver-direct claim
+	// path legitimately holds sandboxes this provider never sees, and re-logging
+	// every cycle buried genuine orphans in permanent noise.
+	verdicts := make(map[string]string, len(listed))
 	for _, s := range listed {
-		if _, ok := claimed[s.ID]; !ok {
-			orphans = append(orphans, s.ID)
+		if _, ok := claimed[s.ID]; ok {
+			continue
+		}
+		if s.ClaimRef != "" {
+			verdicts[s.ID] = "external"
+			if p.orphanVerdicts[s.ID] != "external" {
+				p.log.Info("sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate",
+					"sandbox", s.ID, "claimRef", s.ClaimRef)
+			}
+			continue
+		}
+		orphans = append(orphans, s.ID)
+		verdicts[s.ID] = "orphan"
+		if p.orphanVerdicts[s.ID] != "orphan" {
 			p.log.Info("possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
 				"sandbox", s.ID)
 		}
 	}
+	p.orphanVerdicts = verdicts
 	for id, key := range claimed {
 		if _, ok := live[id]; !ok {
 			staleClaims = append(staleClaims, key)
