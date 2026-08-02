@@ -140,6 +140,20 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 
+// UpdatePod records the newest pod object; sandbox pods are immutable at the
+// runtime level, so no VM action is ever taken here.
+func (p *Provider) UpdatePod(_ context.Context, pod *corev1.Pod) error {
+	key := podKey(pod.Namespace, pod.Name)
+	if !p.podUIDIsCurrent(key, pod) {
+		p.log.Info("ignoring stale UpdatePod for previous pod generation", "pod", key, "uid", pod.UID)
+		return nil
+	}
+	p.mu.Lock()
+	p.pods[key] = pod.DeepCopy()
+	p.mu.Unlock()
+	return nil
+}
+
 // adoptExistingClaim binds pod to the claim already held for its key. The read
 // and the write are one locked step: verification can drop a row between them,
 // and writing an outside copy back would resurrect a sandbox that is gone.
@@ -243,20 +257,6 @@ func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim
 	p.withdrawClaim(key, c.ID)
 	p.log.Info("returned sandbox after its claim could not be persisted", "pod", key, "claim", c.ID)
 	return fmt.Errorf("persist claim for %s: %w", key, persistErr)
-}
-
-// UpdatePod records the newest pod object; sandbox pods are immutable at the
-// runtime level, so no VM action is ever taken here.
-func (p *Provider) UpdatePod(_ context.Context, pod *corev1.Pod) error {
-	key := podKey(pod.Namespace, pod.Name)
-	if !p.podUIDIsCurrent(key, pod) {
-		p.log.Info("ignoring stale UpdatePod for previous pod generation", "pod", key, "uid", pod.UID)
-		return nil
-	}
-	p.mu.Lock()
-	p.pods[key] = pod.DeepCopy()
-	p.mu.Unlock()
-	return nil
 }
 
 // pushRunning stamps the claim identity and Running status onto a copy of the

@@ -176,46 +176,6 @@ func (p *Provider) NotifyPods(_ context.Context, notifier func(*corev1.Pod)) {
 	p.mu.Unlock()
 }
 
-func (p *Provider) notify(pod *corev1.Pod) {
-	p.mu.RLock()
-	n := p.notifier
-	p.mu.RUnlock()
-	if n != nil && pod != nil {
-		n(pod)
-	}
-}
-
-// settled reports whether key's claim is durable and vouched for — neither
-// tentative nor quarantined. Callers hold mu.
-func (p *Provider) settled(key string) bool {
-	_, pending := p.tentative[key]
-	_, unverified := p.quarantined[key]
-	return !pending && !unverified
-}
-
-// claimFor returns the durable claim bound to key. A claim whose credential is
-// not on disk yet is withheld: it can still be rolled back, so nothing may
-// report it Running or adopt it.
-func (p *Provider) claimFor(key string) (Claim, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	if !p.settled(key) {
-		return Claim{}, false
-	}
-	c, ok := p.claims[key]
-	return c, ok
-}
-
-// heldClaimFor returns the claim bound to key whether or not it is durable yet.
-// Release paths use this: a tentative claim still holds a live microVM, and
-// withholding it from delete would strand that VM until sandboxd's TTL.
-func (p *Provider) heldClaimFor(key string) (Claim, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	c, ok := p.claims[key]
-	return c, ok
-}
-
 // SnapshotClaims returns a copy of the pod-key → claim table. Inventory
 // publishing reads it so the O(nodes) NodeInventory summary always reflects
 // the node's own live bindings.
@@ -225,54 +185,6 @@ func (p *Provider) SnapshotClaims() map[string]Claim {
 	out := make(map[string]Claim, len(p.claims))
 	maps.Copy(out, p.claims)
 	return out
-}
-
-// podUIDIsCurrent guards lifecycle actions against stale objects: a same-name
-// pod with a different UID in the table means the request refers to a previous
-// generation.
-func (p *Provider) podUIDIsCurrent(key string, pod *corev1.Pod) bool {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	cur, ok := p.pods[key]
-	if !ok {
-		return true // nothing tracked: not stale, just unknown
-	}
-	return cur.UID == pod.UID
-}
-
-// loadState restores the claims table after a provider restart so the release
-// credentials survive (mirrors the vk-cocoon fallback-identity contract: a
-// restart must not orphan authority over live VMs).
-func (p *Provider) loadState() error {
-	if p.statePath == "" {
-		return nil
-	}
-	b, err := os.ReadFile(p.statePath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read state %s: %w", p.statePath, err)
-	}
-	var st stateFile
-	if err := json.Unmarshal(b, &st); err != nil {
-		return fmt.Errorf("decode state %s: %w", p.statePath, err)
-	}
-	if st.Claims == nil {
-		return nil
-	}
-	// A table written before ClaimedAt existed would otherwise report a Pod start
-	// time that moves on every status read. New persists right after this, which
-	// is what settles it for good.
-	now := metav1.Now()
-	for k, c := range st.Claims {
-		if c.ClaimedAt.IsZero() {
-			c.ClaimedAt = now
-			st.Claims[k] = c
-		}
-	}
-	p.claims = st.Claims
-	return nil
 }
 
 // VerifyClaimsAgainstNode settles the rows no listing has vouched for yet:
@@ -342,6 +254,94 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", id)
 	}
 	return true
+}
+
+func (p *Provider) notify(pod *corev1.Pod) {
+	p.mu.RLock()
+	n := p.notifier
+	p.mu.RUnlock()
+	if n != nil && pod != nil {
+		n(pod)
+	}
+}
+
+// settled reports whether key's claim is durable and vouched for — neither
+// tentative nor quarantined. Callers hold mu.
+func (p *Provider) settled(key string) bool {
+	_, pending := p.tentative[key]
+	_, unverified := p.quarantined[key]
+	return !pending && !unverified
+}
+
+// claimFor returns the durable claim bound to key. A claim whose credential is
+// not on disk yet is withheld: it can still be rolled back, so nothing may
+// report it Running or adopt it.
+func (p *Provider) claimFor(key string) (Claim, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if !p.settled(key) {
+		return Claim{}, false
+	}
+	c, ok := p.claims[key]
+	return c, ok
+}
+
+// heldClaimFor returns the claim bound to key whether or not it is durable yet.
+// Release paths use this: a tentative claim still holds a live microVM, and
+// withholding it from delete would strand that VM until sandboxd's TTL.
+func (p *Provider) heldClaimFor(key string) (Claim, bool) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	c, ok := p.claims[key]
+	return c, ok
+}
+
+// podUIDIsCurrent guards lifecycle actions against stale objects: a same-name
+// pod with a different UID in the table means the request refers to a previous
+// generation.
+func (p *Provider) podUIDIsCurrent(key string, pod *corev1.Pod) bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	cur, ok := p.pods[key]
+	if !ok {
+		return true // nothing tracked: not stale, just unknown
+	}
+	return cur.UID == pod.UID
+}
+
+// loadState restores the claims table after a provider restart so the release
+// credentials survive (mirrors the vk-cocoon fallback-identity contract: a
+// restart must not orphan authority over live VMs).
+func (p *Provider) loadState() error {
+	if p.statePath == "" {
+		return nil
+	}
+	b, err := os.ReadFile(p.statePath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read state %s: %w", p.statePath, err)
+	}
+	var st stateFile
+	if err := json.Unmarshal(b, &st); err != nil {
+		return fmt.Errorf("decode state %s: %w", p.statePath, err)
+	}
+	if st.Claims == nil {
+		return nil
+	}
+	// A table written before ClaimedAt existed would otherwise report a Pod start
+	// time that moves on every status read. New persists right after this, which
+	// is what settles it for good.
+	now := metav1.Now()
+	for k, c := range st.Claims {
+		if c.ClaimedAt.IsZero() {
+			c.ClaimedAt = now
+			st.Claims[k] = c
+		}
+	}
+	p.claims = st.Claims
+	return nil
 }
 
 // dropClaim removes a row the node confirmed gone. ID-guarded like refresh.
