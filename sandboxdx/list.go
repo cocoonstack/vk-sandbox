@@ -16,6 +16,10 @@ import (
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
+type listResponse struct {
+	Sandboxes []provider.ListedSandbox `json:"sandboxes"`
+}
+
 // ListClient reads the sandboxd operator index.
 type ListClient struct {
 	base   string
@@ -30,10 +34,6 @@ func NewListClient(base, token string, timeout time.Duration) *ListClient {
 		timeout = 10 * time.Second
 	}
 	return &ListClient{base: base, token: token, client: &http.Client{Timeout: timeout}}
-}
-
-type listResponse struct {
-	Sandboxes []provider.ListedSandbox `json:"sandboxes"`
 }
 
 // ListSandboxes returns the node's live sandboxes. Implements provider.Lister.
