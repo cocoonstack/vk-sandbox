@@ -42,7 +42,6 @@ import (
 
 	"github.com/cocoonstack/vk-sandbox/inventory"
 	"github.com/cocoonstack/vk-sandbox/provider"
-	"github.com/cocoonstack/vk-sandbox/sandboxdx"
 	"github.com/cocoonstack/vk-sandbox/version"
 )
 
@@ -180,12 +179,11 @@ func (o *options) run() error {
 		},
 	}
 	sdClient := sandboxd.New(o.sandboxdURL, token, sandboxd.WithHTTPClient(hc))
-	lister := sandboxdx.NewListClient(o.sandboxdURL, token, sandboxdRequestTimeout)
 
 	p, err := provider.New(ctx, provider.Config{
 		NodeName:  o.nodeName,
 		Client:    sdClient,
-		Lister:    lister,
+		Lister:    sdClient,
 		Dynamic:   dyn,
 		StatePath: o.statePath,
 		Logger:    o.log.WithName("provider"),
@@ -213,7 +211,7 @@ func (o *options) run() error {
 	// must be pushed or a reaped sandbox stays Running forever.
 	go p.RunLeaseWatch(ctx, leaseWatchInterval)
 	if o.publishInventory {
-		if err := o.startInventoryPublisher(ctx, cfg, p, lister); err != nil {
+		if err := o.startInventoryPublisher(ctx, cfg, p, sdClient); err != nil {
 			return err
 		}
 	}
@@ -308,7 +306,7 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	}), nil
 }
 
-func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, p *provider.Provider, lister *sandboxdx.ListClient) error {
+func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, p *provider.Provider, sd *sandboxd.Client) error {
 	cclient, err := ctrlclient.New(cfg, ctrlclient.Options{})
 	if err != nil {
 		return fmt.Errorf("controller-runtime client for inventory publish: %w", err)
@@ -318,8 +316,8 @@ func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config,
 		advertiseAddr = hostPort(o.sandboxdURL)
 	}
 	pub := inventory.NewPublisher(o.nodeName,
-		inventory.NewLiveSource(p, lister),
-		inventory.NewNodeInfoSource(advertiseAddr, lister),
+		inventory.NewLiveSource(p, sd),
+		inventory.NewNodeInfoSource(advertiseAddr, sd),
 		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"),
 		o.log.WithName("inventory"))
 	go pub.PublishPeriodically(ctx, o.publishInterval)

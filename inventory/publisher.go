@@ -60,7 +60,7 @@ var _ scale.NodeLiveSource = (*LiveSource)(nil)
 // sandboxes sandboxd still holds are published: a claim whose VM is gone is not
 // listed, so the aggregated view never surfaces dead entries.
 func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry, error) {
-	listed, err := s.lister.ListSandboxes(ctx)
+	listed, err := s.lister.Sandboxes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,8 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 			Address:  addrByID[row.ID],
 		}
 		if !row.Deadline.IsZero() {
-			e.Deadline = &row.Deadline
+			d := metav1.NewTime(row.Deadline)
+			e.Deadline = &d
 		}
 		out = append(out, e)
 	}

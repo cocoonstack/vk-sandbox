@@ -34,10 +34,8 @@ import (
 // be persisted; the caller's context may already be canceled by then.
 const undoReleaseTimeout = 10 * time.Second
 
-// SandboxdClient is the subset of the sandboxd API this provider drives.
-// *sandboxd.Client (from sandbox-operator) satisfies Claim/Release;
-// Lister adds the operator-index read used by status and the audit-only
-// orphan scan.
+// SandboxdClient is the subset of the sandboxd API this provider drives;
+// *sandboxd.Client (from sandbox-operator) satisfies it and Lister.
 type SandboxdClient interface {
 	Claim(ctx context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error)
 	Release(ctx context.Context, id, token string) error
@@ -47,17 +45,7 @@ type SandboxdClient interface {
 // root token). Separate from SandboxdClient so tests can fail listing
 // independently of claiming.
 type Lister interface {
-	ListSandboxes(ctx context.Context) ([]ListedSandbox, error)
-}
-
-// ListedSandbox is one row of the sandboxd operator index.
-type ListedSandbox struct {
-	ID         string      `json:"id"`
-	Deadline   metav1.Time `json:"deadline,omitzero"`
-	Hibernated bool        `json:"hibernated,omitempty"`
-	// ClaimRef is the k8s "<namespace>/<name>" the sandbox was claimed under
-	// (echoed by sandboxd from the claim). Empty for claims made without one.
-	ClaimRef string `json:"claim_ref,omitempty"`
+	Sandboxes(ctx context.Context) ([]sandboxd.SandboxSummary, error)
 }
 
 // Claim is the durable record binding one pod key to one sandboxd claim. The
@@ -217,12 +205,12 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		return true // nothing unverified: the listing has nothing to judge
 	}
 
-	listed, err := p.lister.ListSandboxes(ctx)
+	listed, err := p.lister.Sandboxes(ctx)
 	if err != nil {
 		p.log.Info("sandboxd list failed; claims stay unverified", "err", err.Error())
 		return false
 	}
-	live := make(map[string]metav1.Time, len(listed))
+	live := make(map[string]time.Time, len(listed))
 	for _, s := range listed {
 		live[s.ID] = s.Deadline
 	}
@@ -238,7 +226,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 			// A row from a build that predates Deadline would otherwise read as
 			// never-expiring; the node's listing carries the lease end.
 			if c.Deadline.IsZero() && !rowDeadline.IsZero() {
-				c.Deadline = rowDeadline
+				c.Deadline = metav1.NewTime(rowDeadline)
 				p.claims[key] = c
 			}
 			delete(p.quarantined, key)
@@ -353,11 +341,11 @@ func (p *Provider) dropClaim(key, id string) {
 
 // refreshDeadline adopts the node's view of a claim's lease. ID-guarded: the
 // row may have been replaced since the caller looked.
-func (p *Provider) refreshDeadline(key, id string, deadline metav1.Time) {
+func (p *Provider) refreshDeadline(key, id string, deadline time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if c, ok := p.claims[key]; ok && c.ID == id {
-		c.Deadline = deadline
+		c.Deadline = metav1.NewTime(deadline)
 		p.claims[key] = c
 	}
 }

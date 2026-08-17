@@ -195,7 +195,7 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 	}
 	// One extra live sandbox nobody claims → orphan candidate.
 	sd.mu.Lock()
-	sd.live = append(sd.live, ListedSandbox{ID: "sb_orphan"})
+	sd.live = append(sd.live, sandboxd.SandboxSummary{ID: "sb_orphan"})
 	sd.mu.Unlock()
 
 	orphans, stale, ok := p.OrphanScan(ctx)
@@ -237,8 +237,8 @@ func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 
 	sd.mu.Lock()
 	sd.live = append(sd.live,
-		ListedSandbox{ID: "sb_ext", ClaimRef: "default/api-direct"},
-		ListedSandbox{ID: "sb_orphan"})
+		sandboxd.SandboxSummary{ID: "sb_ext", ClaimRef: "default/api-direct"},
+		sandboxd.SandboxSummary{ID: "sb_orphan"})
 	sd.mu.Unlock()
 	p.claims["ns1/stale-pod"] = Claim{ID: "sb_stale"}
 
@@ -717,7 +717,7 @@ func TestStartupDropsAClaimTheNodeNoLongerHolds(t *testing.T) {
 	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_other"}}}
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_other"}}}
 	p, err := New(t.Context(), Config{StatePath: path, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -837,7 +837,7 @@ func TestVerificationClearsTheQuarantineForALiveSandbox(t *testing.T) {
 	}
 
 	sd.listErr = nil
-	sd.live = []ListedSandbox{{ID: "sb_live"}}
+	sd.live = []sandboxd.SandboxSummary{{ID: "sb_live"}}
 	p.VerifyClaimsAgainstNode(t.Context())
 
 	if _, ok := p.claimFor("ns/p"); !ok {
@@ -871,7 +871,7 @@ func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
 
 	sd.mu.Lock()
 	sd.listErr = nil
-	sd.live = []ListedSandbox{{ID: "sb_live"}}
+	sd.live = []sandboxd.SandboxSummary{{ID: "sb_live"}}
 	sd.mu.Unlock()
 
 	deadline := time.After(2 * time.Second)
@@ -968,7 +968,7 @@ func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
 	// sandboxd is reachable again and still holds the sandbox.
 	sd.mu.Lock()
 	sd.listErr = nil
-	sd.live = []ListedSandbox{{ID: "sb_prev"}}
+	sd.live = []sandboxd.SandboxSummary{{ID: "sb_prev"}}
 	sd.mu.Unlock()
 
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
@@ -1177,7 +1177,7 @@ func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
-	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_live", Deadline: metav1.NewTime(want)}}}
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_live", Deadline: want}}}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -1191,8 +1191,8 @@ func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
 func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 	// Failed is terminal, and the archive lifecycle rewrites leases on the node:
 	// a still-listed claim must get its deadline refreshed, not a death notice.
-	sd := &fakeSandboxd{live: []ListedSandbox{{
-		ID: "sb_archived", Deadline: metav1.NewTime(time.Now().Add(6 * time.Hour)),
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{
+		ID: "sb_archived", Deadline: time.Now().Add(6 * time.Hour),
 	}}}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1220,7 +1220,7 @@ func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 	sd.mu.Lock()
 	sd.live = nil
 	sd.mu.Unlock()
-	p.refreshDeadline("ns/p", "sb_archived", metav1.NewTime(time.Now().Add(-time.Minute)))
+	p.refreshDeadline("ns/p", "sb_archived", time.Now().Add(-time.Minute))
 	p.publishExpiredLeases(t.Context())
 	select {
 	case pod := <-notified:
@@ -1256,7 +1256,7 @@ func TestTheWatchPublishesNothingWhenTheNodeCannotBeListed(t *testing.T) {
 func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
 	// Archived keep-forever rows list with a zero deadline; the claim is alive
 	// and its credential is the only one there is.
-	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_archived"}}}
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_archived"}}}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -1313,7 +1313,7 @@ type listAfterHook struct {
 	onList func()
 }
 
-func (l *listAfterHook) ListSandboxes(_ context.Context) ([]ListedSandbox, error) {
+func (l *listAfterHook) Sandboxes(_ context.Context) ([]sandboxd.SandboxSummary, error) {
 	if l.onList != nil {
 		l.onList()
 	}
@@ -1326,7 +1326,7 @@ type fakeSandboxd struct {
 	claims     int
 	releases   []string
 	listErr    error
-	live       []ListedSandbox
+	live       []sandboxd.SandboxSummary
 	claimErr   error
 	releaseErr error
 	lastSpec   sandboxd.ClaimSpec
@@ -1342,7 +1342,7 @@ func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandbo
 	}
 	f.claims++
 	id := fmt.Sprintf("sb_%06d", f.claims)
-	f.live = append(f.live, ListedSandbox{ID: id})
+	f.live = append(f.live, sandboxd.SandboxSummary{ID: id})
 	return sandboxd.ClaimResult{ID: id, Token: "tok-" + id, OwnerAddr: "10.99.0.5:7777", Deadline: f.deadline}, nil
 }
 
@@ -1356,13 +1356,13 @@ func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
 	return nil
 }
 
-func (f *fakeSandboxd) ListSandboxes(_ context.Context) ([]ListedSandbox, error) {
+func (f *fakeSandboxd) Sandboxes(_ context.Context) ([]sandboxd.SandboxSummary, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return append([]ListedSandbox(nil), f.live...), nil
+	return append([]sandboxd.SandboxSummary(nil), f.live...), nil
 }
 
 func (f *fakeSandboxd) releaseCount() int {

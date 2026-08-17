@@ -1,15 +1,15 @@
 # Architecture
 
 vk-sandbox is a single flag-driven daemon: `main.go` wires a virtual-kubelet
-node, and three packages carry the work.
+node, and two packages carry the work.
 
 | Package | Responsibility |
 |---|---|
 | `provider/` | The virtual-kubelet `PodLifecycleHandler`: claim on `CreatePod`, the delete-authorization contract on `DeletePod`, cache-fed status reads, the audit-only orphan scan, and the persisted claims table |
 | `inventory/` | The node's L3 contribution: `LiveSource` (a `scale.NodeLiveSource` over sandboxd's index plus the claims table), `NodeInfoSource` (advertise address + warm-pool capacity), and the `Publisher` that server-side-applies one `NodeInventory` per node |
-| `sandboxdx/` | The root-token sandboxd surfaces the operator's client does not cover: `GET /v1/sandboxes` (live index) and `GET /v1/info` (per-pool warm capacity) |
 
-`Claim` and `Release` are **not** reimplemented here -- they come from
+Nothing on the sandboxd wire is reimplemented here -- `Claim`, `Release`, the
+live index (`Sandboxes`) and warm-pool capacity (`Info`) all come from
 `github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd`, so the wire
 contract has exactly one home. The same repo supplies `pkg/scale`'s selector
 keys and the `InventoryApplier` used for the NodeInventory apply.

@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
@@ -29,7 +29,7 @@ func TestLiveSandboxes(t *testing.T) {
 		"ns1/pod-b": {ID: "sb_b"},
 	}
 	// The node's sandboxd index — the authoritative set of claims on this node.
-	deadline := metav1.NewTime(time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC))
+	deadline := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	lister := staticLister{
 		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline},
 		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
@@ -52,7 +52,7 @@ func TestLiveSandboxes(t *testing.T) {
 		}
 	}
 	// Named by claim ref, id carried, phase mapped, address stamped from the provider's claim.
-	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" || e.Deadline == nil || !e.Deadline.Equal(&deadline) {
+	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" || e.Deadline == nil || !e.Deadline.Time.Equal(deadline) {
 		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q deadline=%v, want Running / 10.0.0.5:7777 / sb_a / %v", e.Phase, e.Address, e.ID, e.Deadline, deadline)
 	}
 	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" || e.Deadline != nil {
@@ -130,9 +130,9 @@ type staticClaims map[string]provider.Claim
 
 func (s staticClaims) SnapshotClaims() map[string]provider.Claim { return s }
 
-type staticLister []provider.ListedSandbox
+type staticLister []sandboxd.SandboxSummary
 
-func (s staticLister) ListSandboxes(context.Context) ([]provider.ListedSandbox, error) {
+func (s staticLister) Sandboxes(context.Context) ([]sandboxd.SandboxSummary, error) {
 	return s, nil
 }
 

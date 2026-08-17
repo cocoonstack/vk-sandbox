@@ -4,12 +4,13 @@ import (
 	"context"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
 
-// InfoClient reads this node's warm-pool capacity from sandboxd GET /v1/info.
-// *sandboxdx.ListClient satisfies it.
+// InfoClient reads this node's warm-pool state from sandboxd GET /v1/info.
+// *sandboxd.Client satisfies it.
 type InfoClient interface {
-	Info(ctx context.Context) ([]extv1beta1.PoolCapacity, error)
+	Info(ctx context.Context) (*sandboxd.NodeInfo, error)
 }
 
 // NodeInfo is the node-level summary the publisher stamps onto NodeInventory
@@ -40,9 +41,19 @@ func NewNodeInfoSource(address string, info InfoClient) NodeInfoSource {
 }
 
 func (s *sandboxdInfoSource) NodeInfo(ctx context.Context) (NodeInfo, error) {
-	pools, err := s.info.Info(ctx)
+	info, err := s.info.Info(ctx)
 	if err != nil {
 		return NodeInfo{}, err
+	}
+	pools := make([]extv1beta1.PoolCapacity, 0, len(info.Pools))
+	for _, p := range info.Pools {
+		pools = append(pools, extv1beta1.PoolCapacity{
+			Template: p.Key.Template,
+			Net:      p.Key.Net,
+			Size:     p.Key.Size,
+			Warm:     p.Warm,
+			Target:   p.Target,
+		})
 	}
 	return NodeInfo{Address: s.address, Pools: pools}, nil
 }

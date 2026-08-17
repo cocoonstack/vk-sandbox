@@ -3,8 +3,6 @@ package provider
 import (
 	"context"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -30,7 +28,7 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 	if p.lister == nil {
 		return nil, nil, false
 	}
-	listed, err := p.lister.ListSandboxes(ctx)
+	listed, err := p.lister.Sandboxes(ctx)
 	if err != nil {
 		p.log.Info("sandboxd list failed; skipping orphan scan this cycle (failed query is not an empty list)", "err", err.Error())
 		return nil, nil, false
@@ -145,9 +143,9 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	// rewrites a claim's lease on the node. So the node confirms every terminal
 	// publication, a still-listed claim just gets its deadline refreshed, and an
 	// unlistable node publishes nothing this tick.
-	live := map[string]metav1.Time{}
+	live := map[string]time.Time{}
 	if p.lister != nil {
-		listed, err := p.lister.ListSandboxes(ctx)
+		listed, err := p.lister.Sandboxes(ctx)
 		if err != nil {
 			p.log.Info("sandboxd list failed; deferring lease-expiry publication", "err", err.Error())
 			return
