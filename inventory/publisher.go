@@ -60,7 +60,7 @@ var _ scale.NodeLiveSource = (*LiveSource)(nil)
 // sandboxes sandboxd still holds are published: a claim whose VM is gone is not
 // listed, so the aggregated view never surfaces dead entries.
 func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry, error) {
-	listed, err := s.lister.ListSandboxes(ctx)
+	listed, err := s.lister.Sandboxes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 		if row.Hibernated {
 			phase = "Hibernated"
 		}
-		out = append(out, scale.InventoryEntry{
+		e := scale.InventoryEntry{
 			Name: name,
 			// ID is sandboxd's own "sb_..." claim id — the handle the node's
 			// release verb needs. The aggregated apiserver surfaces it so a
@@ -93,7 +93,12 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 			Phase:    phase,
 			ClaimRef: name,
 			Address:  addrByID[row.ID],
-		})
+		}
+		if !row.Deadline.IsZero() {
+			d := metav1.NewTime(row.Deadline)
+			e.Deadline = &d
+		}
+		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b scale.InventoryEntry) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
