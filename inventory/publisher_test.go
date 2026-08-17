@@ -3,8 +3,10 @@ package inventory
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/go-logr/logr"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
@@ -27,8 +29,9 @@ func TestLiveSandboxes(t *testing.T) {
 		"ns1/pod-b": {ID: "sb_b"},
 	}
 	// The node's sandboxd index — the authoritative set of claims on this node.
+	deadline := metav1.NewTime(time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC))
 	lister := staticLister{
-		{ID: "sb_a", ClaimRef: "ns1/pod-a"},
+		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline},
 		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
 		{ID: "sb_direct", ClaimRef: "ns2/direct-c"}, // apiserver-direct: not in claims
 		{ID: "sb_noref"}, // no claim ref: falls back to the id
@@ -49,11 +52,11 @@ func TestLiveSandboxes(t *testing.T) {
 		}
 	}
 	// Named by claim ref, id carried, phase mapped, address stamped from the provider's claim.
-	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" {
-		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q, want Running / 10.0.0.5:7777 / sb_a", e.Phase, e.Address, e.ID)
+	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" || e.Deadline == nil || !e.Deadline.Equal(&deadline) {
+		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q deadline=%v, want Running / 10.0.0.5:7777 / sb_a / %v", e.Phase, e.Address, e.ID, e.Deadline, deadline)
 	}
-	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" {
-		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q, want Hibernated / no address / sb_b", e.Phase, e.Address, e.ID)
+	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" || e.Deadline != nil {
+		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q deadline=%v, want Hibernated / no address / sb_b / none", e.Phase, e.Address, e.ID, e.Deadline)
 	}
 	// Apiserver-direct claim: published under its claim ref though this provider
 	// never claimed it (so no address is available here), still carrying its id.

@@ -118,7 +118,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	c := Claim{
 		ID: res.ID, Token: res.Token, Address: res.OwnerAddr,
 		PodUID: string(pod.UID), ClaimedAt: metav1.Now(),
-		Deadline: parseDeadline(res.Deadline),
+		Deadline: metav1.NewTime(res.Deadline),
 	}
 	p.mu.Lock()
 	p.claims[key] = c
@@ -195,7 +195,7 @@ func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	}
 	for _, row := range listed {
 		if row.ID == c.ID {
-			p.refreshDeadline(key, c.ID, parseDeadline(row.Deadline))
+			p.refreshDeadline(key, c.ID, row.Deadline)
 			return nil
 		}
 	}
@@ -310,17 +310,4 @@ func claimIP(addr string) string {
 		return host
 	}
 	return addr
-}
-
-// parseDeadline reads the lease deadline sandboxd returns with a claim. Empty or
-// unparsable means unknown, which status treats as no known expiry.
-func parseDeadline(s string) metav1.Time {
-	if s == "" {
-		return metav1.Time{}
-	}
-	ts, err := time.Parse(time.RFC3339Nano, s)
-	if err != nil {
-		return metav1.Time{}
-	}
-	return metav1.NewTime(ts)
 }

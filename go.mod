@@ -3,7 +3,7 @@ module github.com/cocoonstack/vk-sandbox
 go 1.26.5
 
 require (
-	github.com/cocoonstack/sandbox-operator v0.1.1
+	github.com/cocoonstack/sandbox-operator v0.1.2-0.20260817091030-b86d04f202c2
 	github.com/go-logr/logr v1.4.3
 	github.com/prometheus/client_model v0.6.2
 	github.com/virtual-kubelet/virtual-kubelet v1.13.0

@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -143,7 +145,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	// rewrites a claim's lease on the node. So the node confirms every terminal
 	// publication, a still-listed claim just gets its deadline refreshed, and an
 	// unlistable node publishes nothing this tick.
-	live := map[string]string{}
+	live := map[string]metav1.Time{}
 	if p.lister != nil {
 		listed, err := p.lister.ListSandboxes(ctx)
 		if err != nil {
@@ -158,7 +160,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	for _, cand := range candidates {
 		rowDeadline, alive := live[cand.claim.ID]
 		if alive {
-			p.refreshDeadline(cand.key, cand.claim.ID, parseDeadline(rowDeadline))
+			p.refreshDeadline(cand.key, cand.claim.ID, rowDeadline)
 			continue
 		}
 		// The key may have changed hands behind the listing; the expiry

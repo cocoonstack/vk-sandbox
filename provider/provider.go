@@ -52,9 +52,9 @@ type Lister interface {
 
 // ListedSandbox is one row of the sandboxd operator index.
 type ListedSandbox struct {
-	ID         string `json:"id"`
-	Deadline   string `json:"deadline,omitempty"`
-	Hibernated bool   `json:"hibernated,omitempty"`
+	ID         string      `json:"id"`
+	Deadline   metav1.Time `json:"deadline,omitzero"`
+	Hibernated bool        `json:"hibernated,omitempty"`
 	// ClaimRef is the k8s "<namespace>/<name>" the sandbox was claimed under
 	// (echoed by sandboxd from the claim). Empty for claims made without one.
 	ClaimRef string `json:"claim_ref,omitempty"`
@@ -222,7 +222,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		p.log.Info("sandboxd list failed; claims stay unverified", "err", err.Error())
 		return false
 	}
-	live := make(map[string]string, len(listed))
+	live := make(map[string]metav1.Time, len(listed))
 	for _, s := range listed {
 		live[s.ID] = s.Deadline
 	}
@@ -237,11 +237,9 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		if rowDeadline, ok := live[id]; ok {
 			// A row from a build that predates Deadline would otherwise read as
 			// never-expiring; the node's listing carries the lease end.
-			if c.Deadline.IsZero() {
-				if d := parseDeadline(rowDeadline); !d.IsZero() {
-					c.Deadline = d
-					p.claims[key] = c
-				}
+			if c.Deadline.IsZero() && !rowDeadline.IsZero() {
+				c.Deadline = rowDeadline
+				p.claims[key] = c
 			}
 			delete(p.quarantined, key)
 			continue

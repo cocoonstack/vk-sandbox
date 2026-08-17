@@ -1044,7 +1044,7 @@ func TestAbsentTTLAnnotationRequestsTheFullLease(t *testing.T) {
 
 func TestClaimRecordsTheLeaseDeadline(t *testing.T) {
 	want := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
-	sd := &fakeSandboxd{deadline: want.Format(time.RFC3339Nano)}
+	sd := &fakeSandboxd{deadline: want}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -1177,7 +1177,7 @@ func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
-	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_live", Deadline: want.Format(time.RFC3339Nano)}}}
+	sd := &fakeSandboxd{live: []ListedSandbox{{ID: "sb_live", Deadline: metav1.NewTime(want)}}}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -1192,7 +1192,7 @@ func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 	// Failed is terminal, and the archive lifecycle rewrites leases on the node:
 	// a still-listed claim must get its deadline refreshed, not a death notice.
 	sd := &fakeSandboxd{live: []ListedSandbox{{
-		ID: "sb_archived", Deadline: time.Now().Add(6 * time.Hour).Format(time.RFC3339Nano),
+		ID: "sb_archived", Deadline: metav1.NewTime(time.Now().Add(6 * time.Hour)),
 	}}}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1330,7 +1330,7 @@ type fakeSandboxd struct {
 	claimErr   error
 	releaseErr error
 	lastSpec   sandboxd.ClaimSpec
-	deadline   string
+	deadline   time.Time
 }
 
 func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {

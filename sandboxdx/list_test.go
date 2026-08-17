@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestListSandboxes(t *testing.T) {
@@ -17,7 +18,7 @@ func TestListSandboxes(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"sandboxes":[{"id":"sb_1","claim_ref":"ns/w1"},{"id":"sb_2","hibernated":true}]}`))
+		_, _ = w.Write([]byte(`{"sandboxes":[{"id":"sb_1","claim_ref":"ns/w1","deadline":"2026-08-17T12:00:00.25Z"},{"id":"sb_2","hibernated":true}]}`))
 	}))
 	defer srv.Close()
 
@@ -32,6 +33,10 @@ func TestListSandboxes(t *testing.T) {
 	// The claim_ref sandboxd echoes must decode so the publisher can name the entry.
 	if got[0].ClaimRef != "ns/w1" {
 		t.Fatalf("claim_ref not decoded: got %q, want %q", got[0].ClaimRef, "ns/w1")
+	}
+	// sandboxd writes deadlines with sub-second precision; the row must decode them.
+	if want := time.Date(2026, 8, 17, 12, 0, 0, 250000000, time.UTC); !got[0].Deadline.Time.Equal(want) || !got[1].Deadline.IsZero() {
+		t.Fatalf("deadline not decoded: got %v / %v, want %v / zero", got[0].Deadline, got[1].Deadline, want)
 	}
 }
 

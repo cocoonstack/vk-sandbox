@@ -84,7 +84,7 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 		if row.Hibernated {
 			phase = "Hibernated"
 		}
-		out = append(out, scale.InventoryEntry{
+		e := scale.InventoryEntry{
 			Name: name,
 			// ID is sandboxd's own "sb_..." claim id — the handle the node's
 			// release verb needs. The aggregated apiserver surfaces it so a
@@ -93,7 +93,11 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 			Phase:    phase,
 			ClaimRef: name,
 			Address:  addrByID[row.ID],
-		})
+		}
+		if !row.Deadline.IsZero() {
+			e.Deadline = &row.Deadline
+		}
+		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b scale.InventoryEntry) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
