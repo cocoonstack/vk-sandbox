@@ -30,6 +30,8 @@ type ClaimSnapshotter interface {
 	SnapshotClaims() map[string]provider.Claim
 }
 
+var _ scale.NodeLiveSource = (*LiveSource)(nil)
+
 // LiveSource implements scale.NodeLiveSource: the node's own live sandbox
 // state, never a cluster-wide LIST.
 type LiveSource struct {
@@ -42,8 +44,6 @@ type LiveSource struct {
 func NewLiveSource(claims ClaimSnapshotter, lister provider.Lister) *LiveSource {
 	return &LiveSource{claims: claims, lister: lister}
 }
-
-var _ scale.NodeLiveSource = (*LiveSource)(nil)
 
 // LiveSandboxes summarizes the node's live sandboxes as inventory entries,
 // read from the node's sandboxd operator index (GET /v1/sandboxes) — the
