@@ -1,6 +1,6 @@
 module github.com/cocoonstack/vk-sandbox
 
-go 1.26.5
+go 1.27.0
 
 require (
 	github.com/cocoonstack/sandbox-operator v0.1.2-0.20260817100949-c9d9fdad7acc

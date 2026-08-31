@@ -381,7 +381,7 @@ func TestGetPodStatusStartTimeIsStable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "p", UID: "u"}}
+	pod := &corev1.Pod{Namespace: "ns", Name: "p", UID: "u"}
 	p.pods["ns/p"] = pod
 	p.claims["ns/p"] = Claim{ID: "sb_1", Token: "t", Address: "10.0.0.5:7777", ClaimedAt: metav1.Now()}
 
@@ -404,7 +404,7 @@ func TestStartTimeIsStableForAClaimTableFromAnOlderBuild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.pods["ns/p"] = &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "ns", Name: "p", UID: "u"}}
+	p.pods["ns/p"] = &corev1.Pod{Namespace: "ns", Name: "p", UID: "u"}
 
 	first, _ := p.GetPodStatus(t.Context(), "ns", "p")
 	time.Sleep(20 * time.Millisecond)
@@ -1413,11 +1413,9 @@ func dynWith(t *testing.T, objs ...*unstructured.Unstructured) *dynamicfake.Fake
 
 func sandboxPod(ns, name string, uid types.UID, ownerName string, ownerUID types.UID) *corev1.Pod {
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Namespace: ns, Name: name, UID: uid,
-			Annotations: map[string]string{AnnTemplate: "base:24.04"},
-		},
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "img"}}},
+		Namespace: ns, Name: name, UID: uid,
+		Annotations: map[string]string{AnnTemplate: "base:24.04"},
+		Spec:        corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: "img"}}},
 	}
 	if ownerName != "" {
 		pod.OwnerReferences = []metav1.OwnerReference{{

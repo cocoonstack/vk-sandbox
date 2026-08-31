@@ -133,11 +133,9 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("inventory: read node %q live sandboxes: %w", p.node, err)
 	}
 	inv := &scale.NodeInventory{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       scale.NodeInventoryGVK.Kind,
-			APIVersion: scale.NodeInventoryGVK.GroupVersion().String(),
-		},
-		ObjectMeta: metav1.ObjectMeta{Name: p.node},
+		Kind:       scale.NodeInventoryGVK.Kind,
+		APIVersion: scale.NodeInventoryGVK.GroupVersion().String(),
+		Name:       p.node,
 		Node:       p.node,
 		Entries:    entries,
 	}
