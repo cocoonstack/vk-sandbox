@@ -20,7 +20,7 @@ func TestLiveSandboxes(t *testing.T) {
 	}
 	deadline := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	lister := staticLister{
-		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline},
+		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline, Key: sandboxd.PoolKey{Template: "rt:24.04"}},
 		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
 		{ID: "sb_direct", ClaimRef: "ns2/direct-c"},
 		{ID: "sb_noref"},
@@ -43,6 +43,9 @@ func TestLiveSandboxes(t *testing.T) {
 
 	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" || e.Deadline == nil || !e.Deadline.Time.Equal(deadline) {
 		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q deadline=%v, want Running / 10.0.0.5:7777 / sb_a / %v", e.Phase, e.Address, e.ID, e.Deadline, deadline)
+	}
+	if e := byName["ns1/pod-a"]; e.Template != "rt:24.04" {
+		t.Errorf("ns1/pod-a: template = %q, want rt:24.04", e.Template)
 	}
 	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" || e.Deadline != nil {
 		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q deadline=%v, want Hibernated / no address / sb_b / none", e.Phase, e.Address, e.ID, e.Deadline)

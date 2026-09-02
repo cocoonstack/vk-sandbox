@@ -67,6 +67,7 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 			Phase:    phase,
 			ClaimRef: name,
 			Address:  addrByID[row.ID],
+			Template: row.Key.Template,
 		}
 		if !row.Deadline.IsZero() {
 			d := metav1.NewTime(row.Deadline)
