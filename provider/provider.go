@@ -163,7 +163,6 @@ func (p *Provider) NotifyPods(_ context.Context, notifier func(*corev1.Pod)) {
 	p.mu.Unlock()
 }
 
-// ClaimAddresses maps each claimed sandbox id to its address for inventory publishing.
 func (p *Provider) ClaimAddresses() map[string]string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

@@ -22,8 +22,8 @@ func TestLiveSandboxes(t *testing.T) {
 	lister := staticLister{
 		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline},
 		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
-		{ID: "sb_direct", ClaimRef: "ns2/direct-c"}, // apiserver-direct: not in claims
-		{ID: "sb_noref"}, // no claim ref: falls back to the id
+		{ID: "sb_direct", ClaimRef: "ns2/direct-c"},
+		{ID: "sb_noref"},
 	}
 	src := NewLiveSource(claims, lister)
 	got, err := src.LiveSandboxes(t.Context())
@@ -40,20 +40,18 @@ func TestLiveSandboxes(t *testing.T) {
 			t.Errorf("entry %s: claimRef %q != name", e.Name, e.ClaimRef)
 		}
 	}
-	// Named by claim ref, id carried, phase mapped, address stamped from the provider's claim.
+
 	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" || e.Deadline == nil || !e.Deadline.Time.Equal(deadline) {
 		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q deadline=%v, want Running / 10.0.0.5:7777 / sb_a / %v", e.Phase, e.Address, e.ID, e.Deadline, deadline)
 	}
 	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" || e.Deadline != nil {
 		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q deadline=%v, want Hibernated / no address / sb_b / none", e.Phase, e.Address, e.ID, e.Deadline)
 	}
-	// Apiserver-direct claim: published under its claim ref though this provider
-	// never claimed it (so no address is available here), still carrying its id.
+
 	if e, ok := byName["ns2/direct-c"]; !ok || e.Phase != "Running" || e.Address != "" || e.ID != "sb_direct" {
 		t.Errorf("apiserver-direct claim ns2/direct-c must be published with its id: %+v (ok=%v)", e, ok)
 	}
-	// A sandbox sandboxd listed with no claim ref falls back to the sandboxd id
-	// for its name, and carries that id as the release handle too.
+
 	if e, ok := byName["sb_noref"]; !ok || e.Phase != "Running" || e.ID != "sb_noref" {
 		t.Errorf("ref-less claim must fall back to the id: %+v (ok=%v)", e, ok)
 	}

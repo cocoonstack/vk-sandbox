@@ -35,6 +35,17 @@ var (
 // TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
 // owner CR alive, pod deletion must NOT release the sandbox, and the same-key
 // replacement pod adopts the preserved claim without a second sandboxd claim.
+func TestClaimAddressesOmitsAddressless(t *testing.T) {
+	p := &Provider{claims: map[string]Claim{
+		"ns/a": {ID: "sb_a", Address: "10.0.0.5:7777"},
+		"ns/b": {ID: "sb_b"},
+	}}
+	got := p.ClaimAddresses()
+	if len(got) != 1 || got["sb_a"] != "10.0.0.5:7777" {
+		t.Fatalf("ClaimAddresses() = %v, want only sb_a", got)
+	}
+}
+
 func TestDeleteWithoutAuthorityPreservesAndAdopts(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
