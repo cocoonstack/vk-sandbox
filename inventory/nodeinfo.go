@@ -4,7 +4,7 @@ import (
 	"context"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
 // InfoClient reads this node's warm-pool state from sandboxd GET /v1/info.
