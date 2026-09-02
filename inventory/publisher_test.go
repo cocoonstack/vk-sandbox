@@ -8,27 +8,16 @@ import (
 	"github.com/go-logr/logr"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
-
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
-// TestLiveSandboxes publishes the node's sandboxd operator index as inventory
-// entries: each listed sandbox is named by its claim ref (falling back to the
-// sandboxd id when it has none), carries the sandboxd "sb_..." id (the release
-// handle), maps phase from the hibernated bit, and is stamped with the address
-// from this provider's own claim when it tracks the sandbox. Apiserver-direct
-// claims — listed by sandboxd but absent from this provider's claims table —
-// must still be published, named by their claim ref and carrying their id.
 func TestLiveSandboxes(t *testing.T) {
-	// This provider tracks pod-a (with its address) and pod-b; the apiserver-
-	// direct claim and the ref-less claim are absent from its claims table.
 	claims := staticClaims{
 		"ns1/pod-a": {ID: "sb_a", Address: "10.0.0.5:7777"},
 		"ns1/pod-b": {ID: "sb_b"},
 	}
-	// The node's sandboxd index — the authoritative set of claims on this node.
 	deadline := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	lister := staticLister{
 		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline},
@@ -128,7 +117,15 @@ func TestPublisherWithoutInfo(t *testing.T) {
 
 type staticClaims map[string]provider.Claim
 
-func (s staticClaims) SnapshotClaims() map[string]provider.Claim { return s }
+func (s staticClaims) ClaimAddresses() map[string]string {
+	out := map[string]string{}
+	for _, c := range s {
+		if c.Address != "" {
+			out[c.ID] = c.Address
+		}
+	}
+	return out
+}
 
 type staticLister []sandboxd.SandboxSummary
 

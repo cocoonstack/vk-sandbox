@@ -18,16 +18,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
-
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
 // phaseRunning is the sandbox phase a live claim reports in the inventory.
 const phaseRunning = "Running"
 
-// ClaimSnapshotter exposes the provider's pod-key → claim view.
-type ClaimSnapshotter interface {
-	SnapshotClaims() map[string]provider.Claim
+// ClaimAddresses exposes the provider's sandboxd id → address view.
+type ClaimAddresses interface {
+	ClaimAddresses() map[string]string
 }
 
 var _ scale.NodeLiveSource = (*LiveSource)(nil)
@@ -35,60 +34,35 @@ var _ scale.NodeLiveSource = (*LiveSource)(nil)
 // LiveSource implements scale.NodeLiveSource: the node's own live sandbox
 // state, never a cluster-wide LIST.
 type LiveSource struct {
-	claims ClaimSnapshotter
+	claims ClaimAddresses
 	lister provider.Lister
 }
 
-// NewLiveSource builds a LiveSource over the provider's claims and the
-// sandboxd index.
-func NewLiveSource(claims ClaimSnapshotter, lister provider.Lister) *LiveSource {
+// NewLiveSource builds a LiveSource over the provider's claim addresses and the sandboxd index.
+func NewLiveSource(claims ClaimAddresses, lister provider.Lister) *LiveSource {
 	return &LiveSource{claims: claims, lister: lister}
 }
 
-// LiveSandboxes summarizes the node's live sandboxes as inventory entries,
-// read from the node's sandboxd operator index (GET /v1/sandboxes) — the
-// authoritative set of claims this node holds, including claims the aggregated
-// apiserver made directly against sandboxd without ever touching this provider's
-// claims table. Each listed sandbox is named by its claim ref (the k8s
-// "<namespace>/<name>" sandboxd echoes back) so the aggregated read path
-// resolves it by name; a sandbox with no claim ref falls back to its sandboxd id
-// so nothing is dropped.
-//
-// The address, when known, comes from this provider's own claim record (an
-// apiserver-direct claim has none here and publishes without one — the node's
-// advertise address still routes it). Reading the live index means only
-// sandboxes sandboxd still holds are published: a claim whose VM is gone is not
-// listed, so the aggregated view never surfaces dead entries.
+// the sandboxd index is authoritative: it also holds claims the aggregated apiserver made directly against sandboxd
 func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry, error) {
 	listed, err := s.lister.Sandboxes(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	// This provider's own claims carry the sandbox address; index it by sandboxd
-	// id so a listed sandbox this node also tracks gets its address stamped.
-	addrByID := make(map[string]string)
-	for _, c := range s.claims.SnapshotClaims() {
-		if c.Address != "" {
-			addrByID[c.ID] = c.Address
-		}
-	}
+	addrByID := s.claims.ClaimAddresses()
 
 	out := make([]scale.InventoryEntry, 0, len(listed))
 	for _, row := range listed {
 		name := row.ClaimRef
 		if name == "" {
-			name = row.ID // pre-claim-ref claim: fall back to the id so it still shows
+			name = row.ID
 		}
 		phase := phaseRunning
 		if row.Hibernated {
 			phase = "Hibernated"
 		}
 		e := scale.InventoryEntry{
-			Name: name,
-			// ID is sandboxd's own "sb_..." claim id — the handle the node's
-			// release verb needs. The aggregated apiserver surfaces it so a
-			// kubectl delete releases exactly this microVM (never by k8s name).
+			Name:     name,
 			ID:       row.ID,
 			Phase:    phase,
 			ClaimRef: name,

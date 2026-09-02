@@ -15,7 +15,6 @@ import (
 // (see the cocoonstack/sandbox docs), not the kubelet exec path.
 var ErrNotImplemented = errors.New("vk-sandbox: not implemented; use the sandbox SDK for interactive access")
 
-// GetContainerLogs is not served; sandbox output lives inside the microVM.
 func (p *Provider) GetContainerLogs(context.Context, string, string, string, api.ContainerLogOpts) (io.ReadCloser, error) {
 	return nil, ErrNotImplemented
 }
@@ -28,7 +27,6 @@ func (p *Provider) AttachToContainer(context.Context, string, string, string, ap
 	return ErrNotImplemented
 }
 
-// PortForward is not served; sandboxd preview URLs cover guest port access.
 func (p *Provider) PortForward(context.Context, string, string, int32, io.ReadWriteCloser) error {
 	return ErrNotImplemented
 }

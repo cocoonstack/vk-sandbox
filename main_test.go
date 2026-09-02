@@ -35,7 +35,6 @@ func BenchmarkClientThrottle(b *testing.B) {
 				b.Fatalf("clientset: %v", err)
 			}
 			ctx := b.Context()
-			// Drain the burst bucket so the loop measures steady-state throttling.
 			for range 12 {
 				if _, err := cs.CoreV1().Pods("d").Get(ctx, "p", metav1.GetOptions{}); err != nil {
 					b.Fatalf("drain get: %v", err)
