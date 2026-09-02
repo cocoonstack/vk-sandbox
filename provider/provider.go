@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -27,7 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/dynamic"
 
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
 // undoReleaseTimeout bounds the compensating release when a fresh claim cannot
@@ -164,14 +163,15 @@ func (p *Provider) NotifyPods(_ context.Context, notifier func(*corev1.Pod)) {
 	p.mu.Unlock()
 }
 
-// SnapshotClaims returns a copy of the pod-key → claim table. Inventory
-// publishing reads it so the O(nodes) NodeInventory summary always reflects
-// the node's own live bindings.
-func (p *Provider) SnapshotClaims() map[string]Claim {
+func (p *Provider) ClaimAddresses() map[string]string {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	out := make(map[string]Claim, len(p.claims))
-	maps.Copy(out, p.claims)
+	out := make(map[string]string, len(p.claims))
+	for _, c := range p.claims {
+		if c.Address != "" {
+			out[c.ID] = c.Address
+		}
+	}
 	return out
 }
 

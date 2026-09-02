@@ -8,33 +8,22 @@ import (
 	"github.com/go-logr/logr"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
-
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
-// TestLiveSandboxes publishes the node's sandboxd operator index as inventory
-// entries: each listed sandbox is named by its claim ref (falling back to the
-// sandboxd id when it has none), carries the sandboxd "sb_..." id (the release
-// handle), maps phase from the hibernated bit, and is stamped with the address
-// from this provider's own claim when it tracks the sandbox. Apiserver-direct
-// claims — listed by sandboxd but absent from this provider's claims table —
-// must still be published, named by their claim ref and carrying their id.
 func TestLiveSandboxes(t *testing.T) {
-	// This provider tracks pod-a (with its address) and pod-b; the apiserver-
-	// direct claim and the ref-less claim are absent from its claims table.
 	claims := staticClaims{
 		"ns1/pod-a": {ID: "sb_a", Address: "10.0.0.5:7777"},
 		"ns1/pod-b": {ID: "sb_b"},
 	}
-	// The node's sandboxd index — the authoritative set of claims on this node.
 	deadline := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	lister := staticLister{
 		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline},
 		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
-		{ID: "sb_direct", ClaimRef: "ns2/direct-c"}, // apiserver-direct: not in claims
-		{ID: "sb_noref"}, // no claim ref: falls back to the id
+		{ID: "sb_direct", ClaimRef: "ns2/direct-c"},
+		{ID: "sb_noref"},
 	}
 	src := NewLiveSource(claims, lister)
 	got, err := src.LiveSandboxes(t.Context())
@@ -51,20 +40,18 @@ func TestLiveSandboxes(t *testing.T) {
 			t.Errorf("entry %s: claimRef %q != name", e.Name, e.ClaimRef)
 		}
 	}
-	// Named by claim ref, id carried, phase mapped, address stamped from the provider's claim.
+
 	if e := byName["ns1/pod-a"]; e.Phase != "Running" || e.Address != "10.0.0.5:7777" || e.ID != "sb_a" || e.Deadline == nil || !e.Deadline.Time.Equal(deadline) {
 		t.Errorf("ns1/pod-a: got phase=%q addr=%q id=%q deadline=%v, want Running / 10.0.0.5:7777 / sb_a / %v", e.Phase, e.Address, e.ID, e.Deadline, deadline)
 	}
 	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" || e.Deadline != nil {
 		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q deadline=%v, want Hibernated / no address / sb_b / none", e.Phase, e.Address, e.ID, e.Deadline)
 	}
-	// Apiserver-direct claim: published under its claim ref though this provider
-	// never claimed it (so no address is available here), still carrying its id.
+
 	if e, ok := byName["ns2/direct-c"]; !ok || e.Phase != "Running" || e.Address != "" || e.ID != "sb_direct" {
 		t.Errorf("apiserver-direct claim ns2/direct-c must be published with its id: %+v (ok=%v)", e, ok)
 	}
-	// A sandbox sandboxd listed with no claim ref falls back to the sandboxd id
-	// for its name, and carries that id as the release handle too.
+
 	if e, ok := byName["sb_noref"]; !ok || e.Phase != "Running" || e.ID != "sb_noref" {
 		t.Errorf("ref-less claim must fall back to the id: %+v (ok=%v)", e, ok)
 	}
@@ -128,7 +115,15 @@ func TestPublisherWithoutInfo(t *testing.T) {
 
 type staticClaims map[string]provider.Claim
 
-func (s staticClaims) SnapshotClaims() map[string]provider.Claim { return s }
+func (s staticClaims) ClaimAddresses() map[string]string {
+	out := map[string]string{}
+	for _, c := range s {
+		if c.Address != "" {
+			out[c.ID] = c.Address
+		}
+	}
+	return out
+}
 
 type staticLister []sandboxd.SandboxSummary
 

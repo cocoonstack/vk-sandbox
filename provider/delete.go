@@ -7,20 +7,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// DeletePod applies the delete-authorization contract:
-//
-//   - A stale request (same-name pod, different UID) is ignored.
-//   - The owner Sandbox CR is quorum-read. Only "owner confirmed gone" or
-//     "owner in teardown" authorizes the sandboxd release that destroys the
-//     VM. Everything else — live owner, query failure, ambiguous 404 —
-//     PRESERVES the claim: the pod entry is dropped but the sandbox keeps
-//     running for a same-key replacement pod to adopt.
-//
-// This is the node-side half of the operator's guarantee that pod churn and
-// eviction storms are invisible to running sandboxes.
 func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	key := podKey(pod.Namespace, pod.Name)
 	if !p.podUIDIsCurrent(key, pod) {

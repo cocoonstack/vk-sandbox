@@ -11,8 +11,6 @@ import (
 // the reaper destroys at that deadline.
 const ReasonLeaseExpired = "SandboxLeaseExpired"
 
-// GetPod serves from the in-memory table — the L0 rule: status reads never
-// round-trip the apiserver or sandboxd.
 func (p *Provider) GetPod(_ context.Context, namespace, name string) (*corev1.Pod, error) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -33,7 +31,6 @@ func (p *Provider) GetPods(_ context.Context) ([]*corev1.Pod, error) {
 	return out, nil
 }
 
-// GetPodStatus derives status from the claims table (cache-fed, no I/O).
 func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*corev1.PodStatus, error) {
 	key := podKey(namespace, name)
 	p.mu.RLock()

@@ -22,7 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
 // sandboxGVR is the owner CR resource this provider authorizes against.
@@ -35,6 +35,17 @@ var (
 // TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
 // owner CR alive, pod deletion must NOT release the sandbox, and the same-key
 // replacement pod adopts the preserved claim without a second sandboxd claim.
+func TestClaimAddressesOmitsAddressless(t *testing.T) {
+	p := &Provider{claims: map[string]Claim{
+		"ns/a": {ID: "sb_a", Address: "10.0.0.5:7777"},
+		"ns/b": {ID: "sb_b"},
+	}}
+	got := p.ClaimAddresses()
+	if len(got) != 1 || got["sb_a"] != "10.0.0.5:7777" {
+		t.Fatalf("ClaimAddresses() = %v, want only sb_a", got)
+	}
+}
+
 func TestDeleteWithoutAuthorityPreservesAndAdopts(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -193,7 +204,6 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 	if err := p.CreatePod(ctx, pod); err != nil {
 		t.Fatalf("CreatePod: %v", err)
 	}
-	// One extra live sandbox nobody claims → orphan candidate.
 	sd.mu.Lock()
 	sd.live = append(sd.live, sandboxd.SandboxSummary{ID: "sb_orphan"})
 	sd.mu.Unlock()
@@ -212,7 +222,6 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 		t.Fatalf("orphan scan released a sandbox (%d): background reconciliation is audit-only", got)
 	}
 
-	// Failed list is NOT an empty list: cycle must be skipped.
 	sd.mu.Lock()
 	sd.listErr = errors.New("sandboxd down")
 	sd.mu.Unlock()
@@ -347,9 +356,6 @@ func TestConcurrentSaveStateNeverLosesAClaim(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	// Each writer adds a claim and persists. Whichever save lands last must
-	// still describe every claim added before it, or a release credential is
-	// gone and its microVM leaks until sandboxd's TTL reaps it.
 	const writers = 32
 	var wg sync.WaitGroup
 	for w := range writers {
@@ -424,8 +430,6 @@ func TestClaimedAtBackfillIsPersisted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Without persistence the next restart backfills a NEW timestamp, so the
-	// reported start time would jump on every restart.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -467,8 +471,6 @@ func TestSaveStateRecreatesADeletedStateDir(t *testing.T) {
 }
 
 func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
-	// Not just on migration: any unwritable state path must stop the node before
-	// it takes a Pod, because every claim it made would leak on restart.
 	dir := t.TempDir()
 	current := `{"claims":{"ns/p":{"id":"sb_1","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(dir+"/claims.json", []byte(current), 0o600); err != nil {
@@ -485,8 +487,6 @@ func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
 }
 
 func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
-	// runningStatus reports ClaimedAt as the start time with no fallback, so
-	// every claim path must stamp it; this pins that invariant.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: t.TempDir() + "/c.json", Logger: logr.Discard()})
 	if err != nil {
@@ -502,7 +502,6 @@ func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
 		t.Error("a fresh claim carries no ClaimedAt")
 	}
 
-	// Adopt-in-place: drop the pod entry, keep the claim, then recreate.
 	p.forgetPod("ns/p")
 	p.mu.Lock()
 	c := p.claims["ns/p"]
@@ -534,8 +533,6 @@ func TestNewFailsWhenTheClaimedAtMigrationCannotBePersisted(t *testing.T) {
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Readable but not writable: the migration would otherwise stay in memory and
-	// re-pick a new timestamp on every restart, silently.
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -553,8 +550,6 @@ func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Break persistence after startup, the way a full disk or a read-only
-	// remount would.
 	if err := os.Chmod(dir, 0o500); err != nil {
 		t.Fatal(err)
 	}
@@ -593,9 +588,6 @@ func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err == nil {
 		t.Fatal("CreatePod reported success")
 	}
-	// The credential is the only way to reach that sandbox; dropping it would
-	// strand the microVM until sandboxd's TTL. It stays tentative, so it is not
-	// reachable through claimFor and cannot be reported Running or adopted.
 	p.mu.RLock()
 	_, held := p.claims["ns/p"]
 	_, pending := p.tentative["ns/p"]
@@ -623,8 +615,6 @@ func TestATentativeClaimIsNeverReportedRunning(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
 
-	// persist fails, then the compensating release fails too, so the claim is
-	// kept in memory for a later DeletePod — but it is not durable.
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err == nil {
 		t.Fatal("CreatePod reported success")
 	}
@@ -639,9 +629,6 @@ func TestATentativeClaimIsNeverReportedRunning(t *testing.T) {
 }
 
 func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
-	// A claim whose write and compensating release both failed holds a live
-	// microVM whose credential exists only in memory. Claiming over it would
-	// destroy the only handle to that sandbox.
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
@@ -661,7 +648,6 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 		t.Fatal("setup: expected a stranded claim")
 	}
 
-	// sandboxd is still unreachable: the create must refuse rather than orphan it.
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u2", "", "")); err == nil {
 		t.Fatal("a replacement claimed over a stranded sandbox instead of failing")
 	}
@@ -672,7 +658,6 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 		t.Fatalf("the stranded credential was overwritten: %q -> %q", stranded.ID, still.ID)
 	}
 
-	// Once sandboxd answers again the key is reusable.
 	sd.releaseErr = nil
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u3", "", "")); err == nil {
 		t.Log("create succeeded after the stranded sandbox was returned")
@@ -683,8 +668,6 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 }
 
 func TestATentativeClaimCanStillBeReleased(t *testing.T) {
-	// A claim that never reached disk still holds a live microVM. Hiding it from
-	// DeletePod as well would strand that VM until sandboxd's TTL.
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, StatePath: dir + "/claims.json", Logger: logr.Discard()})
@@ -699,7 +682,6 @@ func TestATentativeClaimCanStillBeReleased(t *testing.T) {
 	pod := sandboxPod("ns", "p", "u1", "", "")
 	_ = p.CreatePod(t.Context(), pod)
 
-	// sandboxd is reachable again; the delete must reach the tentative claim.
 	sd.releaseErr = nil
 	if err := p.DeletePod(t.Context(), pod); err != nil {
 		t.Fatalf("DeletePod: %v", err)
@@ -710,8 +692,6 @@ func TestATentativeClaimCanStillBeReleased(t *testing.T) {
 }
 
 func TestStartupDropsAClaimTheNodeNoLongerHolds(t *testing.T) {
-	// A release whose save failed leaves this row behind. Reloading it would let
-	// a same-key Pod adopt a destroyed sandbox and report it Running.
 	path := t.TempDir() + "/claims.json"
 	stale := `{"claims":{"ns/p":{"id":"sb_gone","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
@@ -728,8 +708,6 @@ func TestStartupDropsAClaimTheNodeNoLongerHolds(t *testing.T) {
 }
 
 func TestStartupKeepsTheTableWhenTheNodeCannotBeListed(t *testing.T) {
-	// A failed query is not an empty list (2026-05-15): treating it as one once
-	// deleted every active VM's state in a single sweep.
 	path := t.TempDir() + "/claims.json"
 	current := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(current), 0o600); err != nil {
@@ -751,7 +729,6 @@ func TestCommitWritesOnlyItsOwnTentativeClaim(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Two claims in flight; only "ns/a" is being committed.
 	p.mu.Lock()
 	for _, k := range []string{"ns/a", "ns/b"} {
 		p.claims[k] = Claim{ID: "sb_" + k, Token: "t", ClaimedAt: metav1.Now()}
@@ -779,10 +756,6 @@ func TestCommitWritesOnlyItsOwnTentativeClaim(t *testing.T) {
 }
 
 func TestAnUnverifiedClaimIsNotAdoptedOrReportedRunning(t *testing.T) {
-	// The sequence: an authorized release saved nothing (disk was down), the
-	// process restarted, and sandboxd could not be listed either. The stale row
-	// survives on purpose — a failed query is not an empty list — but nothing may
-	// treat it as a live sandbox until a listing vouches for it.
 	path := t.TempDir() + "/claims.json"
 	stale := `{"claims":{"ns/p":{"id":"sb_released","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(stale), 0o600); err != nil {
@@ -806,12 +779,10 @@ func TestAnUnverifiedClaimIsNotAdoptedOrReportedRunning(t *testing.T) {
 		t.Error("an unverified claim was reported Running")
 	}
 
-	// It is still releasable: the credential may be the only handle to a live VM.
 	if _, ok := p.heldClaimFor("ns/p"); !ok {
 		t.Error("an unverified claim must stay reachable for release")
 	}
 
-	// Once sandboxd answers and does not list it, the row goes away.
 	sd.listErr = nil
 	if !p.VerifyClaimsAgainstNode(t.Context()) {
 		t.Fatal("verification did not run")
@@ -846,9 +817,6 @@ func TestVerificationClearsTheQuarantineForALiveSandbox(t *testing.T) {
 }
 
 func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
-	// --orphan-scan-interval=0 switches the audit off. Verification must still
-	// run, or a startup that could not reach sandboxd would leave the node's own
-	// sandboxes unusable for the process's lifetime.
 	path := t.TempDir() + "/claims.json"
 	live := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(live), 0o600); err != nil {
@@ -893,9 +861,6 @@ func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
 }
 
 func TestARestartDoesNotClaimOverAnUnverifiedSandbox(t *testing.T) {
-	// The real restart path: pods is empty, so virtual-kubelet issues CreatePod
-	// for a Pod whose sandbox this node may still hold. Claiming a second one
-	// would strand the first, whose only credential is the loaded row.
 	path := t.TempDir() + "/claims.json"
 	loaded := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(loaded), 0o600); err != nil {
@@ -920,9 +885,6 @@ func TestARestartDoesNotClaimOverAnUnverifiedSandbox(t *testing.T) {
 }
 
 func TestVerificationLeavesRowsItWasNeverAskedToJudge(t *testing.T) {
-	// Verification exists to settle rows nothing has vouched for. A row this
-	// process created is already known good, and judging it against a listing
-	// taken moments earlier is exactly how a live sandbox loses its record.
 	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -951,9 +913,6 @@ func TestVerificationLeavesRowsItWasNeverAskedToJudge(t *testing.T) {
 }
 
 func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
-	// After a restart the row is unverified. Once sandboxd vouches for it the
-	// create must adopt it immediately: waiting for the kubelet's next retry
-	// would leave the Pod pending for no reason.
 	path := t.TempDir() + "/claims.json"
 	loaded := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(loaded), 0o600); err != nil {
@@ -965,7 +924,6 @@ func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// sandboxd is reachable again and still holds the sandbox.
 	sd.mu.Lock()
 	sd.listErr = nil
 	sd.live = []sandboxd.SandboxSummary{{ID: "sb_prev"}}
@@ -984,8 +942,6 @@ func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
 }
 
 func TestClaimCarriesItsPodKey(t *testing.T) {
-	// sandboxd echoes ClaimRef in its operator index. Without it a claim whose
-	// HTTP response was lost cannot be traced back to the Pod it belongs to.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1000,9 +956,6 @@ func TestClaimCarriesItsPodKey(t *testing.T) {
 }
 
 func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
-	// The verifier runs alongside CreatePod. If adoption reads the row, the
-	// verifier drops it, and adoption then writes its copy back, a released
-	// sandbox reappears and is published Running.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1012,7 +965,6 @@ func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
 	p.claims["ns/p"] = Claim{ID: "sb_gone", Token: "t"}
 	p.mu.Unlock()
 
-	// Stand in for the verifier winning the race.
 	p.mu.Lock()
 	delete(p.claims, "ns/p")
 	p.mu.Unlock()
@@ -1026,9 +978,6 @@ func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
 }
 
 func TestAbsentTTLAnnotationRequestsTheFullLease(t *testing.T) {
-	// Sending 0 means sandboxd's own default — five minutes, sized for ephemeral
-	// SDK claims — after which the reaper destroys the VM under a pod still
-	// reporting Running. A pod's sandbox lives until the pod is deleted.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1082,15 +1031,12 @@ func TestAPodPastItsLeaseIsNotReportedRunning(t *testing.T) {
 	if st.Phase != corev1.PodFailed || st.Reason != ReasonLeaseExpired {
 		t.Errorf("phase/reason = %v/%v", st.Phase, st.Reason)
 	}
-	// The lease end must not stop the release credential from working.
 	if _, ok := p.heldClaimFor("ns/p"); !ok {
 		t.Error("the expired claim's credential must stay reachable for release")
 	}
 }
 
 func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
-	// Tables written by older builds carry no deadline; that must read as "no
-	// known expiry", not as instantly expired.
 	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -1110,8 +1056,6 @@ func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
 }
 
 func TestLeaseWatchPublishesFailedForAReapedSandbox(t *testing.T) {
-	// An asynchronous provider is never polled: without the watch, the Running
-	// pushed at create time would stand forever after the reaper fires.
 	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
@@ -1141,8 +1085,6 @@ func TestLeaseWatchPublishesFailedForAReapedSandbox(t *testing.T) {
 }
 
 func TestAnExpiredClaimIsReplacedNotAdopted(t *testing.T) {
-	// The reaper destroyed the VM at the deadline; adopting the row would bind
-	// the replacement pod to a dead sandbox and publish it Running.
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1169,8 +1111,6 @@ func TestAnExpiredClaimIsReplacedNotAdopted(t *testing.T) {
 }
 
 func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
-	// A table from a build that predates Deadline reads as never-expiring; the
-	// node's listing carries the lease end, so the vouching pass settles it.
 	path := t.TempDir() + "/claims.json"
 	legacy := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
@@ -1189,8 +1129,6 @@ func TestVerificationBackfillsALegacyDeadlineFromTheListing(t *testing.T) {
 }
 
 func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
-	// Failed is terminal, and the archive lifecycle rewrites leases on the node:
-	// a still-listed claim must get its deadline refreshed, not a death notice.
 	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{
 		ID: "sb_archived", Deadline: time.Now().Add(6 * time.Hour),
 	}}}
@@ -1216,7 +1154,6 @@ func TestTheWatchConfirmsWithTheNodeBeforePublishingFailure(t *testing.T) {
 		t.Fatalf("the node's lease was not adopted: %v", c.Deadline)
 	}
 
-	// Once the node stops listing it, the death notice goes out.
 	sd.mu.Lock()
 	sd.live = nil
 	sd.mu.Unlock()
@@ -1254,8 +1191,6 @@ func TestTheWatchPublishesNothingWhenTheNodeCannotBeListed(t *testing.T) {
 }
 
 func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
-	// Archived keep-forever rows list with a zero deadline; the claim is alive
-	// and its credential is the only one there is.
 	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_archived"}}}
 	p, err := New(t.Context(), Config{NodeName: "n", Client: sd, Lister: sd, Logger: logr.Discard()})
 	if err != nil {
@@ -1278,9 +1213,6 @@ func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
 }
 
 func TestTheWatchDoesNotTerminalizeAReplacementPod(t *testing.T) {
-	// Between the listing and the publication the key can change hands: old Pod
-	// deleted, a new one created with a fresh claim. The expiry belongs to the
-	// old claim; stamping it on the successor would falsely kill it forever.
 	p, err := New(t.Context(), Config{NodeName: "n", Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)

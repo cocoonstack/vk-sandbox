@@ -39,7 +39,7 @@ vk-sandbox \
 ```
 
 `KUBECONFIG` (or in-cluster config) must reach the cluster; see
-[manifests/](manifests/) for a systemd/DaemonSet-style deployment and the RBAC
+[manifests/](manifests/) for the RBAC
 the destroy-authorization read needs (get on `sandboxes.agents.x-k8s.io`).
 
 The kubelet exec/logs/port-forward surfaces are intentionally not served —
@@ -67,8 +67,10 @@ pinned by intent tests:
    generation's UID are ignored.
 5. **L0 API hygiene.** Status reads are served from the provider's own table;
    no control-loop LIST hits the apiserver.
-6. **Lease expiry is published, never discovered.** Leases are fixed at claim
-   time and the reaper destroys the VM at the deadline; a watch pushes the Pod
+6. **Lease expiry is published, never discovered.** The node grants a lease at
+   claim time and its archive lifecycle may rewrite it; the provider refreshes
+   the deadline from the node's listing and the reaper destroys the VM at the
+   deadline; a watch pushes the Pod
    `Failed` then, because virtual-kubelet never polls an async provider and a
    dead workload must not keep reading as Running.
 

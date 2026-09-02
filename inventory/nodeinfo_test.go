@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
 // TestNodeInfoSource confirms the source pairs the configured advertise address

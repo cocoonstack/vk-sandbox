@@ -11,8 +11,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
-	"github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd"
 )
 
 // Pod-contract annotation keys. Template/net/size reuse the operator's
@@ -44,16 +44,6 @@ const (
 	defaultClaimTTLSeconds = 24 * 60 * 60
 )
 
-// CreatePod claims a hot sandbox from sandboxd for the pod. Two properties
-// carry the decentralized design:
-//
-//   - Adopt-in-place: a same-key pod whose predecessor was deleted without
-//     destroy authorization (churn, eviction) finds the preserved claim and
-//     adopts it instead of claiming a new VM — pod deletion stayed invisible
-//     to the sandbox.
-//   - No warm capacity is a typed failure (sandboxd 429/redirect): the pod
-//     stays Pending and the operator's L1 path handles fallback; this provider
-//     never queues or retries into the node.
 func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	key := podKey(pod.Namespace, pod.Name)
 
@@ -140,8 +130,6 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 
-// UpdatePod records the newest pod object; sandbox pods are immutable at the
-// runtime level, so no VM action is ever taken here.
 func (p *Provider) UpdatePod(_ context.Context, pod *corev1.Pod) error {
 	key := podKey(pod.Namespace, pod.Name)
 	if !p.podUIDIsCurrent(key, pod) {
