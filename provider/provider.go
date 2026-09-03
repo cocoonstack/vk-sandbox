@@ -143,12 +143,9 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		return nil, err
 	}
 	// Nothing has vouched for a table read off disk, so it starts quarantined and
-	// a listing settles it. Without a lister nothing ever could, and quarantining
-	// would hide it forever; that shape is tests and the no-inventory path.
-	if p.lister != nil {
-		p.quarantineLoadedClaims()
-		p.VerifyClaimsAgainstNode(ctx)
-	}
+	// a listing settles it.
+	p.quarantineLoadedClaims()
+	p.VerifyClaimsAgainstNode(ctx)
 	// Prove the claims table is writable before accepting any Pod. Running with an
 	// unwritable state path would persist no release credential, so every claim
 	// this process made would leak its microVM on restart. Failing here instead
@@ -190,9 +187,6 @@ func (p *Provider) ClaimAddresses() map[string]string {
 // instead: still releasable, but invisible to adoption and to Running until a
 // listing confirms them. Reports whether the listing succeeded.
 func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
-	if p.lister == nil {
-		return false
-	}
 	// Snapshot first: a claim made while the listing is in flight is not in it,
 	// and judging that claim by this list would drop a row for a live sandbox.
 	p.mu.RLock()
@@ -250,8 +244,7 @@ func (p *Provider) notify(pod *corev1.Pod) {
 	}
 }
 
-// settled reports whether key's claim is durable and vouched for — neither
-// tentative nor quarantined. Callers hold mu.
+// settled means neither tentative nor quarantined; callers hold mu.
 func (p *Provider) settled(key string) bool {
 	_, pending := p.tentative[key]
 	_, unverified := p.quarantined[key]
@@ -365,10 +358,8 @@ func (p *Provider) quarantineLoadedClaims() {
 	}
 }
 
-// saveState persists the claims table, logging rather than returning a failure.
-// Its callers are the paths that have already changed what the node holds —
-// adoption of a preserved claim, and release — where there is nothing left to
-// undo. A fresh claim uses persist directly, because that one is still undoable.
+// saveState persists the claims table, logging rather than returning a failure:
+// its callers (adoption, release) have already changed what the node holds.
 func (p *Provider) saveState() {
 	if err := p.persist(); err != nil {
 		p.log.Error(err, "persist claims state")

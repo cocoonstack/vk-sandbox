@@ -64,20 +64,13 @@ func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 		Message:   "sandbox lease ended at " + c.Deadline.Format(time.RFC3339) + "; the microVM is reaped at the deadline",
 		StartTime: &c.ClaimedAt,
 	}
-	for _, ctr := range pod.Spec.Containers {
-		st.ContainerStatuses = append(st.ContainerStatuses, corev1.ContainerStatus{
-			Name: ctr.Name,
-			State: corev1.ContainerState{
-				Terminated: &corev1.ContainerStateTerminated{
-					ExitCode:   1,
-					Reason:     ReasonLeaseExpired,
-					FinishedAt: c.Deadline,
-				},
-			},
-			Image:   ctr.Image,
-			ImageID: "sandboxd://" + c.ID,
-		})
-	}
+	st.ContainerStatuses = containerStatuses(pod, c, corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{
+			ExitCode:   1,
+			Reason:     ReasonLeaseExpired,
+			FinishedAt: c.Deadline,
+		},
+	}, false)
 	return st
 }
 
@@ -100,16 +93,22 @@ func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 		st.PodIP = ip
 		st.PodIPs = []corev1.PodIP{{IP: ip}}
 	}
+	st.ContainerStatuses = containerStatuses(pod, c, corev1.ContainerState{
+		Running: &corev1.ContainerStateRunning{StartedAt: c.ClaimedAt},
+	}, true)
+	return st
+}
+
+func containerStatuses(pod *corev1.Pod, c Claim, state corev1.ContainerState, ready bool) []corev1.ContainerStatus {
+	var out []corev1.ContainerStatus
 	for _, ctr := range pod.Spec.Containers {
-		st.ContainerStatuses = append(st.ContainerStatuses, corev1.ContainerStatus{
-			Name:  ctr.Name,
-			Ready: true,
-			State: corev1.ContainerState{
-				Running: &corev1.ContainerStateRunning{StartedAt: c.ClaimedAt},
-			},
+		out = append(out, corev1.ContainerStatus{
+			Name:    ctr.Name,
+			Ready:   ready,
+			State:   state,
 			Image:   ctr.Image,
 			ImageID: "sandboxd://" + c.ID,
 		})
 	}
-	return st
+	return out
 }

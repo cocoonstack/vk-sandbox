@@ -25,9 +25,6 @@ const (
 // nor a claim_ref (an unheld claim_ref marks an apiserver-direct claim, not an
 // orphan), and claim entries whose sandbox is gone.
 func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaims []string, ok bool) {
-	if p.lister == nil {
-		return nil, nil, false
-	}
 	listed, err := p.lister.Sandboxes(ctx)
 	if err != nil {
 		p.log.Info("sandboxd list failed; skipping orphan scan this cycle (failed query is not an empty list)", "err", err.Error())
@@ -143,15 +140,12 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	// rewrites a claim's lease on the node. So the node confirms every terminal
 	// publication, a still-listed claim just gets its deadline refreshed, and an
 	// unlistable node publishes nothing this tick.
-	live := map[string]time.Time{}
-	if p.lister != nil {
-		listed, err := p.lister.Sandboxes(ctx)
-		if err != nil {
-			p.log.Info("sandboxd list failed; deferring lease-expiry publication", "err", err.Error())
-			return
-		}
-		live = liveDeadlines(listed)
+	listed, err := p.lister.Sandboxes(ctx)
+	if err != nil {
+		p.log.Info("sandboxd list failed; deferring lease-expiry publication", "err", err.Error())
+		return
 	}
+	live := liveDeadlines(listed)
 
 	for _, cand := range candidates {
 		rowDeadline, alive := live[cand.claim.ID]
@@ -174,8 +168,6 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	}
 }
 
-// runTicker invokes action on an interval until ctx is done or action returns
-// false.
 func runTicker(ctx context.Context, interval time.Duration, action func() bool) {
 	t := time.NewTicker(interval)
 	defer t.Stop()

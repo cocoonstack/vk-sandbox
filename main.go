@@ -243,9 +243,6 @@ func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc
 	}
 	kubeletPort, _ := listenPort(o.listenAddr)
 	return func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
-		if cfg.Node == nil {
-			return p, nil, nil
-		}
 		if cfg.Node.Labels == nil {
 			cfg.Node.Labels = map[string]string{}
 		}
@@ -334,7 +331,6 @@ func parseLabels(s string) map[string]string {
 	return out
 }
 
-// kubeConfig prefers in-cluster, falling back to KUBECONFIG.
 func kubeConfig() (*rest.Config, error) {
 	if cfg, err := rest.InClusterConfig(); err == nil {
 		return cfg, nil
@@ -347,8 +343,6 @@ func fileReadable(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// hostPort strips the scheme off a sandboxd base URL; a bare "host:port" is
-// returned unchanged.
 func hostPort(raw string) string {
 	if u, err := url.Parse(raw); err == nil && u.Host != "" {
 		return u.Host

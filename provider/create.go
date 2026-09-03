@@ -172,11 +172,6 @@ func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	if !held || c.Deadline.IsZero() || time.Now().Before(c.Deadline.Time) {
 		return nil
 	}
-	if p.lister == nil {
-		// Nothing can confirm liveness; the cached deadline is all there is.
-		p.dropClaim(key, c.ID)
-		return nil
-	}
 	listed, err := p.lister.Sandboxes(ctx)
 	if err != nil {
 		return fmt.Errorf("pod %s: claim %s is past its cached deadline and sandboxd cannot be listed; refusing to replace it: %w", key, c.ID, err)
