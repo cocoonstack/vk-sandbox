@@ -8,9 +8,10 @@ from **sandboxd** -- the node-local hot-sandbox daemon of
 
 One virtual node fronts one sandboxd. A sandbox Pod scheduled to that node
 becomes a claim against the node's warm microVM pool; the Pod's IP is the
-sandbox VM's address; deleting the owning `Sandbox` CR -- and only that --
-releases the VM. Kubernetes stays the record-of-intent and policy plane, and
-the claim transaction runs entirely on the node.
+sandbox VM's address; deleting the owning `Sandbox` CR releases the VM, and so
+does a bare Pod (no controller owner) deleting itself, the owner going into
+teardown, or the owner's UID rotating. Kubernetes stays the record-of-intent
+and policy plane, and the claim transaction runs entirely on the node.
 
 ```
 Kubernetes control plane                    cocoon node

@@ -24,8 +24,9 @@ flowchart LR
 ```
 
 One virtual node fronts one sandboxd. A sandbox Pod scheduled here becomes a
-warm claim; the Pod's IP is the sandbox VM's address; deleting the owner
-`Sandbox` CR — and only that — destroys the VM.
+warm claim; the Pod's IP is the sandbox VM's address; deleting the owning
+`Sandbox` CR destroys the VM, and so does a bare Pod (no controller owner)
+deleting itself or the owner going into teardown or being replaced.
 
 ## Quick start
 

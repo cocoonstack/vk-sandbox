@@ -10,7 +10,7 @@ node, and two packages carry the work.
 
 Nothing on the sandboxd wire is reimplemented here -- `Claim`, `Release`, the
 live index (`Sandboxes`) and warm-pool capacity (`Info`) all come from
-`github.com/cocoonstack/sandbox-operator/pkg/scale/sandboxd`, so the wire
+`github.com/cocoonstack/sandbox-operator/pkg/sandboxd`, so the wire
 contract has exactly one home. The same repo supplies `pkg/scale`'s selector
 keys and the `InventoryApplier` used for the NodeInventory apply.
 
@@ -36,7 +36,7 @@ CreatePod
                  +-- ClaimResult {id, token, owner_addr}
                           |
                           v
-                 claims[key] = {ID, Token, Address, PodUID}
+                 claims[key] = {ID, Token, Address, PodUID, ClaimedAt, Deadline}
                  persist the table, then notify the kubelet:
                    phase Running, PodIP/HostIP = host of owner_addr,
                    one synthetic ready container per spec container
@@ -88,11 +88,12 @@ kubelet retries with the credential intact.
 
 ## Claims table persistence
 
-The claims table (`{id, token, address, podUID, claimedAt}` per pod key) is
-written to `--state-path` as JSON with a tmp-file + rename, mode `0600`,
-directory mode `0700`. It is reloaded at startup, so a provider restart keeps
-the authority to tear down exactly what it delivered. The binary requires the
-flag; only the in-process constructor accepts an empty path, for tests.
+The claims table (`{id, token, address, podUID, claimedAt, deadline}` per pod
+key) is written to `--state-path` as JSON with a tmp-file + rename, mode
+`0600`, directory mode `0700`. It is reloaded at startup, so a provider
+restart keeps the authority to tear down exactly what it delivered. The
+binary requires the flag; only the in-process constructor accepts an empty
+path, for tests.
 
 A claim is durable before it counts: until its own write lands it is invisible
 to status and to adoption, and a create whose write fails returns the sandbox
@@ -129,7 +130,9 @@ and nothing is published against the new one.
 against the claims table. It **reports only** -- background reconciliation
 cannot prove user intent, so it never releases:
 
-- sandboxd rows bound to no claim are logged as possible orphans and retained;
+- sandboxd rows bound to no local claim and carrying no `claim_ref` are logged
+  as possible orphans and retained; a non-empty `claim_ref` marks an
+  apiserver-direct claim and is recorded as `external`, not an orphan;
 - claims whose sandbox is no longer listed (TTL reap, external release) are
   logged as stale.
 

@@ -17,6 +17,8 @@ environment.
 | `--node-cpu` | `VK_NODE_CPU` | `4000` | Advertised node CPU capacity (a scheduling budget only) |
 | `--node-memory` | `VK_NODE_MEMORY` | `8Ti` | Advertised node memory capacity |
 | `--node-pods` | `VK_NODE_PODS` | `2000` | Advertised node max pods |
+| `--kube-api-qps` | -- | `200` | client-go QPS for the Kubernetes clients (status pushes, delete authorization, inventory publish) |
+| `--kube-api-burst` | -- | `400` | client-go burst on top of `--kube-api-qps` |
 | `--sandboxd-url` | `SANDBOXD_URL` | `http://127.0.0.1:7777` | sandboxd base URL |
 | `--sandboxd-advertise-addr` | `SANDBOXD_ADVERTISE_ADDR` | host:port of `--sandboxd-url` | `host:port` published in `NodeInventory` for claim routing |
 | `--sandboxd-token-file` | `SANDBOXD_TOKEN_FILE` | none | File holding the sandboxd node API token (trailing whitespace trimmed) |
@@ -25,6 +27,7 @@ environment.
 | `--publish-inventory` | -- | `false` | Server-side-apply this node's `NodeInventory` for the L3 aggregation layer |
 | `--publish-interval` | -- | `30s` | `NodeInventory` publish cadence |
 | `--node-labels` | -- | `sandbox.cocoonstack.io/runtime=sandboxd` | Comma-separated extra node labels, `key=value` |
+| `--version` | -- | `false` | Print the build version and exit |
 
 `KUBECONFIG` is read only when in-cluster configuration is unavailable: the
 binary tries the in-cluster service-account config first and falls back to the
