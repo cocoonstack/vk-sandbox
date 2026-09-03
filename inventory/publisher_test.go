@@ -60,10 +60,6 @@ func TestLiveSandboxes(t *testing.T) {
 	}
 }
 
-// TestPublisherStampsNodeInfo verifies the node's published NodeInventory carries
-// its live entries plus the sandboxd advertise address and per-pool warm capacity
-// — the fields the aggregated apiserver reads to pick a warm node and route a
-// claim.
 func TestPublisherStampsNodeInfo(t *testing.T) {
 	live := staticLive{{Name: "ns1/pod-a", Phase: "Running", ClaimRef: "ns1/pod-a", Address: "10.0.0.5:7777"}}
 	info := staticInfo{info: NodeInfo{
@@ -103,8 +99,6 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 	}
 }
 
-// TestPublisherWithoutInfo confirms a nil NodeInfoSource yields an entries-only
-// inventory (no address/pools), keeping the source optional.
 func TestPublisherWithoutInfo(t *testing.T) {
 	applier := &captureApplier{}
 	pub := NewPublisher("n1", staticLive{}, nil, applier, logr.Discard())

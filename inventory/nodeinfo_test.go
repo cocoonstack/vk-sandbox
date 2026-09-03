@@ -9,9 +9,6 @@ import (
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// TestNodeInfoSource confirms the source pairs the configured advertise address
-// with the live warm-pool capacity read from sandboxd, flattening the nested pool
-// key and keeping only the warm/target counts inventory needs.
 func TestNodeInfoSource(t *testing.T) {
 	info := &sandboxd.NodeInfo{Pools: []sandboxd.NodePool{
 		{Key: sandboxd.PoolKey{Template: "base:24.04", Net: "none", Size: "small"}, Warm: 4, Target: 4, Golden: true},
@@ -35,8 +32,6 @@ func TestNodeInfoSource(t *testing.T) {
 	}
 }
 
-// TestNodeInfoSourceError propagates a sandboxd read failure rather than
-// publishing a half-empty inventory.
 func TestNodeInfoSourceError(t *testing.T) {
 	src := NewNodeInfoSource("172.16.26.2:7777", stubInfoClient{err: errors.New("boom")})
 	if _, err := src.NodeInfo(t.Context()); err == nil {

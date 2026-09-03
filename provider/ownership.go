@@ -12,9 +12,6 @@ import (
 	"k8s.io/client-go/dynamic"
 )
 
-// authVerdict is the destroy-authorization decision for one pod deletion.
-type authVerdict int
-
 const (
 	// authPreserve: pod deletion is NOT authority over the sandbox — keep the
 	// claim alive for a same-key replacement pod to adopt (pod churn, eviction
@@ -24,6 +21,9 @@ const (
 	// the node-local sandbox is authorized.
 	authRelease
 )
+
+// authVerdict is the destroy-authorization decision for one pod deletion.
+type authVerdict int
 
 // controllerOwnerRef returns the pod's controller owner reference, or nil for
 // bare pods.

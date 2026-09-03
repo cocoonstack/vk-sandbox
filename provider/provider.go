@@ -98,7 +98,7 @@ type Provider struct {
 
 	mu       sync.RWMutex
 	pods     map[string]*corev1.Pod // key -> last accepted pod object
-	claims   map[string]Claim       // key -> sandboxd claim
+	claims   map[string]Claim
 	notifier func(*corev1.Pod)
 
 	// tentative holds pod keys whose claim has not been durably written yet. Such

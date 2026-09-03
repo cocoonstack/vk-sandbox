@@ -10,9 +10,6 @@ import (
 	restclient "k8s.io/client-go/rest"
 )
 
-// BenchmarkClientThrottle measures one client-go request at the QPS=5/Burst=10
-// zero-value fallback versus the tuned defaults, against an in-process apiserver
-// stub; steady-state ns/op converges on the rate limiter's per-request budget (#1).
 func BenchmarkClientThrottle(b *testing.B) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
