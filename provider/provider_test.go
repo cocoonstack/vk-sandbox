@@ -25,16 +25,12 @@ import (
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// sandboxGVR is the owner CR resource this provider authorizes against.
 var (
 	sandboxGVR = schema.GroupVersionResource{Group: "agents.x-k8s.io", Version: "v1beta1", Resource: "sandboxes"}
 
 	errTestReleaseFailed = errors.New("sandboxd unreachable")
 )
 
-// TestDeleteWithoutAuthorityPreservesAndAdopts is the core contract: with the
-// owner CR alive, pod deletion must NOT release the sandbox, and the same-key
-// replacement pod adopts the preserved claim without a second sandboxd claim.
 func TestClaimAddressesOmitsAddressless(t *testing.T) {
 	p := &Provider{claims: map[string]Claim{
 		"ns/a": {ID: "sb_a", Address: "10.0.0.5:7777"},
@@ -86,8 +82,6 @@ func TestDeleteWithoutAuthorityPreservesAndAdopts(t *testing.T) {
 	}
 }
 
-// TestDeleteReleasesWhenOwnerGone: a structured NotFound naming the owner
-// authorizes release; the claim and pod entries are dropped.
 func TestDeleteReleasesWhenOwnerGone(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -112,7 +106,6 @@ func TestDeleteReleasesWhenOwnerGone(t *testing.T) {
 	}
 }
 
-// TestDeleteReleasesOnOwnerTeardown: deletionTimestamp on the owner authorizes.
 func TestDeleteReleasesOnOwnerTeardown(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -130,7 +123,6 @@ func TestDeleteReleasesOnOwnerTeardown(t *testing.T) {
 	}
 }
 
-// TestDeletePreservesWhenOwnerUnverifiable: no dynamic client → preserve.
 func TestDeletePreservesWhenOwnerUnverifiable(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -151,8 +143,6 @@ func TestDeletePreservesWhenOwnerUnverifiable(t *testing.T) {
 	}
 }
 
-// TestBarePodDeleteReleases: with no controller owner, the pod is its own
-// authority and deletion releases.
 func TestBarePodDeleteReleases(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -170,8 +160,6 @@ func TestBarePodDeleteReleases(t *testing.T) {
 	}
 }
 
-// TestStaleUIDDeleteIgnored: a DeletePod bearing a previous generation's UID
-// must be a no-op.
 func TestStaleUIDDeleteIgnored(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -193,8 +181,6 @@ func TestStaleUIDDeleteIgnored(t *testing.T) {
 	}
 }
 
-// TestOrphanScanAuditOnly: the scan reports but never releases, and a failed
-// list skips the cycle instead of reading as an empty node.
 func TestOrphanScanAuditOnly(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -233,10 +219,6 @@ func TestOrphanScanAuditOnly(t *testing.T) {
 	}
 }
 
-// TestOrphanScanExternalClaimsAndLogDedup pins the #3 contract: a row whose
-// claim_ref this provider does not hold is an apiserver-direct claim — not an
-// orphan candidate — and every verdict (external, orphan, stale) is logged on
-// first sight, not every cycle.
 func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -268,8 +250,6 @@ func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 	}
 }
 
-// TestStateRoundTrip: claims persist across a provider restart so release
-// credentials survive.
 func TestStateRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	statePath := filepath.Join(t.TempDir(), "claims.json")
@@ -292,7 +272,6 @@ func TestStateRoundTrip(t *testing.T) {
 	}
 }
 
-// TestPluralResource pins the es/ies rules that prevented the sandboxs 404.
 func TestPluralResource(t *testing.T) {
 	cases := map[string]string{
 		"sandbox":    "sandboxes",
@@ -309,8 +288,6 @@ func TestPluralResource(t *testing.T) {
 	}
 }
 
-// TestRuntimeMismatchRejected: a pod asking for a different runtime never
-// reaches sandboxd.
 func TestRuntimeMismatchRejected(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -1240,7 +1217,6 @@ func TestTheWatchDoesNotTerminalizeAReplacementPod(t *testing.T) {
 	}
 }
 
-// listAfterHook lets a test slip a claim in between the listing and the lock.
 type listAfterHook struct {
 	onList func()
 }
@@ -1252,7 +1228,6 @@ func (l *listAfterHook) Sandboxes(_ context.Context) ([]sandboxd.SandboxSummary,
 	return nil, nil
 }
 
-// fakeSandboxd implements SandboxdClient + Lister with call accounting.
 type fakeSandboxd struct {
 	mu         sync.Mutex
 	claims     int
@@ -1309,7 +1284,6 @@ func (f *fakeSandboxd) claimCount() int {
 	return f.claims
 }
 
-// ownerSandbox builds the unstructured owner CR the fake dynamic client serves.
 func ownerSandbox(ns, name string, uid types.UID, deleting bool) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion("agents.x-k8s.io/v1beta1")
@@ -1325,11 +1299,6 @@ func ownerSandbox(ns, name string, uid types.UID, deleting bool) *unstructured.U
 	return u
 }
 
-// dynWith returns a fake dynamic client. The recorded dead-end applies here
-// literally: seeding objects through the constructor naive-pluralizes the kind
-// (Sandbox → "sandboxs"), parking them under a GVR nobody queries, so Get sees
-// a structured NotFound and misreads the owner as deleted. Objects MUST be
-// seeded with Tracker().Create under the explicit GVR.
 func dynWith(t *testing.T, objs ...*unstructured.Unstructured) *dynamicfake.FakeDynamicClient {
 	t.Helper()
 	scheme := runtime.NewScheme()

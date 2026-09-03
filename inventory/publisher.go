@@ -43,7 +43,7 @@ func NewLiveSource(claims ClaimAddresses, lister provider.Lister) *LiveSource {
 	return &LiveSource{claims: claims, lister: lister}
 }
 
-// the sandboxd index is authoritative: it also holds claims the aggregated apiserver made directly against sandboxd
+// LiveSandboxes reads the sandboxd index, which is authoritative: it also holds claims the aggregated apiserver made directly against sandboxd.
 func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry, error) {
 	listed, err := s.lister.Sandboxes(ctx)
 	if err != nil {

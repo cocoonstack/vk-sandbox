@@ -87,6 +87,8 @@ type stateFile struct {
 	Claims map[string]Claim `json:"claims"`
 }
 
+type podNotifier func(*corev1.Pod)
+
 // Provider implements the virtual-kubelet PodLifecycleHandler over sandboxd.
 type Provider struct {
 	nodeName  string
@@ -98,8 +100,8 @@ type Provider struct {
 
 	mu       sync.RWMutex
 	pods     map[string]*corev1.Pod // key -> last accepted pod object
-	claims   map[string]Claim       // key -> sandboxd claim
-	notifier func(*corev1.Pod)
+	claims   map[string]Claim
+	notifier podNotifier
 
 	// tentative holds pod keys whose claim has not been durably written yet. Such
 	// a claim is invisible to persist — otherwise a concurrent create's snapshot
@@ -210,10 +212,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		p.log.Info("sandboxd list failed; claims stay unverified", "err", err.Error())
 		return false
 	}
-	live := make(map[string]time.Time, len(listed))
-	for _, s := range listed {
-		live[s.ID] = s.Deadline
-	}
+	live := liveDeadlines(listed)
 
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -429,6 +428,14 @@ func (p *Provider) write(committing string) error {
 		return fmt.Errorf("rename claims state: %w", err)
 	}
 	return nil
+}
+
+func liveDeadlines(listed []sandboxd.SandboxSummary) map[string]time.Time {
+	live := make(map[string]time.Time, len(listed))
+	for _, s := range listed {
+		live[s.ID] = s.Deadline
+	}
+	return live
 }
 
 func podKey(namespace, name string) string { return namespace + "/" + name }

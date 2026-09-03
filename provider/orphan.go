@@ -150,9 +150,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 			p.log.Info("sandboxd list failed; deferring lease-expiry publication", "err", err.Error())
 			return
 		}
-		for _, row := range listed {
-			live[row.ID] = row.Deadline
-		}
+		live = liveDeadlines(listed)
 	}
 
 	for _, cand := range candidates {

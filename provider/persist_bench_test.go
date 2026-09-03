@@ -9,9 +9,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// BenchmarkCommitClaim measures one claim commit against a full 2000-claim
-// table (the advertised pod capacity); every commit serializes the whole table
-// under saveMu (#2), so the inverse of ns/op is the claim-commit ceiling.
 func BenchmarkCommitClaim(b *testing.B) {
 	p, err := New(b.Context(), Config{
 		NodeName:  "bench",
@@ -21,7 +18,8 @@ func BenchmarkCommitClaim(b *testing.B) {
 	if err != nil {
 		b.Fatalf("new provider: %v", err)
 	}
-	for i := range 2000 {
+	const advertisedPodCapacity = 2000
+	for i := range advertisedPodCapacity {
 		p.claims[fmt.Sprintf("ns/pod-%d", i)] = Claim{
 			ID:        fmt.Sprintf("sb_%032d", i),
 			Token:     "0123456789abcdef0123456789abcdef",
