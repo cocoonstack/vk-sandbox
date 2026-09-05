@@ -5,13 +5,11 @@ move any of these forward are welcome.
 
 ## Near term
 
-- **Engine axis in `NodeInventory`.** sandboxd keys warm pools by hypervisor
-  engine (`ch` | `fc`); publish that axis on inventory entries so the
-  control-plane warm-pool driver can target mixed-engine pools.
-- **End-to-end prompt release.** Inventory entries already carry the sandboxd
-  claim id; finish the operator-side path so deleting a synthesized `Sandbox`
-  releases the node-local claim immediately instead of waiting for the claim
-  TTL.
+- **Engine axis in `NodeInventory`.** sandboxd keys warm pools by
+  `(template, net, size)` and boots every sandbox with the hypervisor cocoon
+  is configured for on that node; once sandboxd grows a per-pool engine
+  axis (`ch` | `fc`), publish it on inventory entries so the control-plane
+  warm-pool driver can target mixed-engine pools.
 
 ## Medium term
 
