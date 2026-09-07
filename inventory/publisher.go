@@ -54,9 +54,7 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 	out := make([]scale.InventoryEntry, 0, len(listed))
 	for _, row := range listed {
 		name := row.ClaimRef
-		if name == "" {
-			name = row.ID
-		}
+		name = cmp.Or(name, row.ID)
 		phase := phaseRunning
 		if row.Hibernated {
 			phase = "Hibernated"
