@@ -27,9 +27,9 @@ Useful context when assessing impact:
   their release tokens across restarts. Disclosure of that file grants the
   authority to tear down exactly the sandboxes this node delivered — nothing
   more — but it is still a secret.
-- Destroying a VM requires the owner `Sandbox` CR to be confirmed gone or in
-  teardown; pod-level state alone is never authority. Bypasses of that
-  contract are security-relevant even when no data is exposed.
+- Releasing a controller-owned Pod's VM requires its owner to be confirmed
+  gone, replaced, deleting, or expired. A bare Pod authorizes its own teardown.
+  See the [delete-authorization contract](docs/architecture.md#delete-authorization-pod-deletion-is-not-vm-authority).
 - The kubelet exec/logs/port-forward surfaces are intentionally not served;
   a change that opens them should be treated as an attack-surface change and
   reviewed as such.

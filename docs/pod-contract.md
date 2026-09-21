@@ -34,10 +34,10 @@ verbatim, so one contract spans the L2 claim gateway and this provider.
 |---|---|---|
 | `sandbox.cocoonstack.io/runtime` | in | Must be `sandboxd` (absent is treated as `sandboxd`) |
 | `sandbox.cocoonstack.io/template` | in | sandboxd template axis. **Required** -- `CreatePod` fails without it |
-| `sandbox.cocoonstack.io/net` | in | Claim network axis; empty means the sandboxd default |
-| `sandbox.cocoonstack.io/size` | in | Claim VM size axis; empty means the sandboxd default |
-| `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds. Absent means 86400 — sandboxd clamps to its 24h maximum — because a pod's sandbox lives until the pod is deleted, and sandboxd's own default of five minutes is sized for ephemeral SDK claims. An explicit `0` still selects that sandboxd default. A non-integer or negative value fails the create |
-| `sandbox.cocoonstack.io/claim-id` | out | Written back by the provider: the sandboxd claim id backing the Pod |
+| `sandbox.cocoonstack.io/net` | in | Claim network axis; the operator's mutator sets it from the pod template (default `none`), empty means the sandboxd default |
+| `sandbox.cocoonstack.io/size` | in | Claim VM size axis; the operator's mutator derives it from the first container's requests (`small`/`medium`/`large`), empty means the sandboxd default |
+| `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds. Absent means 86400, sandboxd's 24h maximum for ordinary claims. An explicit `0` selects sandboxd's five-minute default for ephemeral SDK claims. A non-integer or negative value fails the create |
+| `sandbox.cocoonstack.io/claim-id` | out | Published by the provider on the status push: the sandboxd claim id backing the Pod. The provider's own Pod view may drop it after a resync |
 
 The release token is deliberately **not** exposed on the Pod -- it stays in
 the node's claims table, which is what keeps VM destruction an authorized,
@@ -51,7 +51,7 @@ kubelet, because there is no container runtime on this node:
 | Field | Value |
 |---|---|
 | `status.phase` | `Running` once claimed, `Pending` while the Pod is tracked without a claim |
-| `status.podIP` / `podIPs` / `hostIP` | Host part of sandboxd's `owner_addr` -- the microVM's address |
+| `status.podIP` / `podIPs` / `hostIP` | Host part of sandboxd's `owner_addr`, the address serving the claim |
 | `status.conditions` | `Initialized`, `Ready`, `PodScheduled` all `True` |
 | `status.containerStatuses[]` | One ready, running entry per `spec.containers` entry, with `imageID` = `sandboxd://<claim id>` |
 
@@ -67,12 +67,21 @@ through the sandbox SDK and preview URLs.
 | No warm capacity (sandboxd `429`, or a redirect to warm peers) | `CreatePod` fails typed; the Pod stays `Pending` and the operator's L1 path handles fallback. This provider never queues or retries into the node |
 | Missing or invalid `template` / `ttl-seconds` | `CreatePod` fails; no claim is made |
 | Pod deleted, owner `Sandbox` still alive | The claim is **preserved**; the VM keeps running |
+| Pod deleted, owner `Sandbox` expired (Ready reason `SandboxExpired`) | Release authorized: the operator tore the workload down and no replacement Pod comes |
 | A replacement Pod with the same namespace/name | Adopts the preserved claim in place -- same VM, no second claim |
-| Pod update | Recorded only; sandbox Pods are immutable at the runtime level |
+| Pod update | Retries a tentative claim left by a failed create; otherwise records metadata only, since running sandbox Pods are immutable at the runtime level |
 | Owner `Sandbox` deleted | Release authorized; the microVM is destroyed |
 
-The full decision table for the last two rows is in
+The full delete-authorization decision table is in
 [Architecture](architecture.md#delete-authorization-pod-deletion-is-not-vm-authority).
+
+If claim persistence and its compensating release both fail, the provider
+retains the Pod and release credential. Its cached claim-id annotation differs
+from the Kubernetes Pod, so virtual-kubelet calls `UpdatePod` on its next
+resync. That path returns the stranded claim before creating a replacement;
+`DeletePod` finds the retained claim by its pod key. The retry rides the
+resync, which stops for a Pod that has gone `Failed`, so a template with
+`restartPolicy: Never` does not get it.
 
 ## Lost claim responses
 
@@ -86,12 +95,13 @@ which is what lets an operator trace such a stray to the Pod it was for.
 
 ## Lease expiry
 
-Nothing in the stack renews a lease — the e2b keepalive is record-keeping
-only — so sandboxd's reaper destroys the microVM at the claim's deadline. The
-provider records the deadline returned with each claim and, once it passes,
-pushes the Pod `Failed` with reason `SandboxLeaseExpired` instead of letting a
-dead workload read as Running — pushed, because virtual-kubelet never polls an
-asynchronous provider, so only a published status exists. The release credential stays valid either way.
-Pods beyond 24 hours are outside the current contract: leases are fixed at
-claim time by design, and that boundary is reported honestly rather than
-papered over.
+The provider records the deadline returned with each claim. Once it passes,
+the lease watcher checks sandboxd: a listed sandbox refreshes its cached
+deadline, confirmed absence pushes `Failed` with reason `SandboxLeaseExpired`,
+and a failed listing defers the decision. This permits archive retention to
+change the lease without falsely reporting a live claim as gone.
+
+Ordinary claims are capped at 24 hours and have no automatic renewal; the e2b
+keepalive is record-keeping only. The provider pushes status because
+virtual-kubelet never polls an asynchronous provider. The release credential
+remains available for authorized teardown.

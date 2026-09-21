@@ -71,9 +71,8 @@ type Claim struct {
 
 // Config assembles a Provider.
 type Config struct {
-	NodeName string
-	Client   SandboxdClient
-	Lister   Lister
+	Client SandboxdClient
+	Lister Lister
 	// Dynamic reads owner CRs for the destroy-authorization quorum. nil means
 	// owner state is unverifiable and every guarded delete preserves.
 	Dynamic dynamic.Interface
@@ -91,7 +90,6 @@ type podNotifier func(*corev1.Pod)
 
 // Provider implements the virtual-kubelet PodLifecycleHandler over sandboxd.
 type Provider struct {
-	nodeName  string
 	client    SandboxdClient
 	lister    Lister
 	dyn       dynamic.Interface
@@ -128,7 +126,6 @@ type Provider struct {
 // New builds a Provider and loads any persisted claims table.
 func New(ctx context.Context, cfg Config) (*Provider, error) {
 	p := &Provider{
-		nodeName:    cfg.NodeName,
 		client:      cfg.Client,
 		lister:      cfg.Lister,
 		dyn:         cfg.Dynamic,

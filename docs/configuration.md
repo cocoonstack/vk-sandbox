@@ -9,7 +9,7 @@ environment.
 
 | Flag | Environment | Default | Description |
 |---|---|---|---|
-| `--node-name` | `VK_NODE_NAME` | `vk-sandboxd` | Virtual node name. Must be distinct from a co-located vk-cocoon node |
+| `--node-name` | `VK_NODE_NAME` | `vk-sandboxd` | Virtual node name. Must differ from the physical Kubernetes node and any co-located vk-cocoon node |
 | `--node-ip` | `VK_NODE_IP` | none | Node `InternalIP` advertised to the apiserver. Omitted from node addresses when empty |
 | `--listen-addr` | `VK_LISTEN_ADDR` | `:10260` | Kubelet API listen address. Must differ from a co-located vk-cocoon, which uses `:10250` |
 | `--tls-cert` | `VK_TLS_CERT` | none | Kubelet API TLS certificate |
@@ -35,6 +35,10 @@ kubeconfig at `$KUBECONFIG`.
 
 The token file is read once at startup, so rotating the sandboxd token
 requires a restart.
+
+When publishing inventory for a remote operator, set
+`--sandboxd-advertise-addr` to a reachable node address. The loopback default
+for `--sandboxd-url` is suitable for local claims, not remote claim routing.
 
 ## Advertised capacity
 
@@ -103,7 +107,7 @@ written compactly (shown expanded here) because every claim rewrites it:
 | `address` | sandboxd `owner_addr` for the claim (`host:port`); the host becomes the Pod IP |
 | `podUID` | UID of the Pod generation that last held the claim (operator forensics; the stale-request guard reads the in-memory pod table, not this field) |
 | `claimedAt` | When the claim was taken; reported as the Pod start time, which must not move between reads. A table written before this field existed gets it filled in on the next load |
-| `deadline` | The lease end sandboxd returned for this claim. Past it the reaper has destroyed the VM, so the Pod is pushed `Failed`. Absent in tables from older builds; the vouching pass backfills it from the node's listing |
+| `deadline` | The cached lease end. Once it passes, the provider confirms the node's state: a listed sandbox refreshes the deadline, confirmed absence publishes `Failed`, and a failed listing defers the decision. Absent in older tables; the vouching pass backfills it |
 
 It is written with a tmp-file + atomic rename at mode `0600`, its directory
 created at `0700`, and reloaded on startup. Concurrent Pod creates serialize
