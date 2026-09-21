@@ -34,8 +34,8 @@ verbatim, so one contract spans the L2 claim gateway and this provider.
 |---|---|---|
 | `sandbox.cocoonstack.io/runtime` | in | Must be `sandboxd` (absent is treated as `sandboxd`) |
 | `sandbox.cocoonstack.io/template` | in | sandboxd template axis. **Required** -- `CreatePod` fails without it |
-| `sandbox.cocoonstack.io/net` | in | Claim network axis; empty means the sandboxd default |
-| `sandbox.cocoonstack.io/size` | in | Claim VM size axis; empty means the sandboxd default |
+| `sandbox.cocoonstack.io/net` | in | Claim network axis; the operator's mutator sets it from the pod template (default `none`), empty means the sandboxd default |
+| `sandbox.cocoonstack.io/size` | in | Claim VM size axis; the operator's mutator derives it from the first container's requests (`small`/`medium`/`large`), empty means the sandboxd default |
 | `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds. Absent means 86400 — sandboxd clamps to its 24h maximum — because a pod's sandbox lives until the pod is deleted, and sandboxd's own default of five minutes is sized for ephemeral SDK claims. An explicit `0` still selects that sandboxd default. A non-integer or negative value fails the create |
 | `sandbox.cocoonstack.io/claim-id` | out | Written back by the provider: the sandboxd claim id backing the Pod |
 
@@ -67,6 +67,7 @@ through the sandbox SDK and preview URLs.
 | No warm capacity (sandboxd `429`, or a redirect to warm peers) | `CreatePod` fails typed; the Pod stays `Pending` and the operator's L1 path handles fallback. This provider never queues or retries into the node |
 | Missing or invalid `template` / `ttl-seconds` | `CreatePod` fails; no claim is made |
 | Pod deleted, owner `Sandbox` still alive | The claim is **preserved**; the VM keeps running |
+| Pod deleted, owner `Sandbox` expired (Ready reason `SandboxExpired`) | Release authorized: the operator tore the workload down and no replacement Pod comes |
 | A replacement Pod with the same namespace/name | Adopts the preserved claim in place -- same VM, no second claim |
 | Pod update | Recorded only; sandbox Pods are immutable at the runtime level |
 | Owner `Sandbox` deleted | Release authorized; the microVM is destroyed |

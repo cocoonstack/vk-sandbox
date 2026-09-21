@@ -68,6 +68,7 @@ the dynamic client and decides:
 | Structured `NotFound` whose `Details.Name` matches the owner | **release** -- owner confirmed gone |
 | Owner exists with a non-zero `deletionTimestamp` | **release** -- owner in teardown |
 | Owner exists with a different UID than the ownerReference | **release** -- the referenced generation is gone |
+| Owner `Sandbox` alive but expired (Ready reason `SandboxExpired`) | **release** -- the operator tore its workload down and no replacement Pod comes |
 | Owner alive | preserve |
 | 404 without `Details.Name` (endpoint shape unverified) | preserve |
 | Any query error, or no dynamic client configured | preserve |
