@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -285,15 +286,7 @@ func podWithClaim(pod *corev1.Pod, id string) *corev1.Pod {
 	return out
 }
 
-func ann(pod *corev1.Pod, key, def string) string {
-	if pod.Annotations == nil {
-		return def
-	}
-	if v, ok := pod.Annotations[key]; ok && v != "" {
-		return v
-	}
-	return def
-}
+func ann(pod *corev1.Pod, key, def string) string { return cmp.Or(pod.Annotations[key], def) }
 
 // claimIP extracts the host of a sandboxd owner_addr ("10.0.0.5:7777").
 func claimIP(addr string) string {
