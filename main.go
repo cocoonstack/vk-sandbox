@@ -68,7 +68,7 @@ func main() {
 		nodeName         = flag.String("node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name (must be distinct from a co-located vk-cocoon node)")
 		nodeIP           = flag.String("node-ip", envOr("VK_NODE_IP", ""), "node InternalIP advertised to the apiserver")
 		listenAddr       = flag.String("listen-addr", envOr("VK_LISTEN_ADDR", ":10260"), "kubelet API listen address (must differ from a co-located vk-cocoon, which uses :10250)")
-		tlsCert          = flag.String("tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; plain HTTP if unset)")
+		tlsCert          = flag.String("tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; a self-signed in-memory cert is used when unset)")
 		tlsKey           = flag.String("tls-key", os.Getenv("VK_TLS_KEY"), "kubelet API TLS key")
 		nodeCPU          = flag.String("node-cpu", envOr("VK_NODE_CPU", "4000"), "advertised node CPU capacity (a scheduling budget; the real resource is sandboxd's)")
 		nodeMem          = flag.String("node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
