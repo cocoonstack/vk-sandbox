@@ -81,9 +81,10 @@ pinned by intent tests:
    release token) persists to a 0600 state file; a provider restart keeps the
    authority to tear down exactly what it delivered.
 
-The Pod annotation contract, the claim axes, and the `--publish-inventory` L3
-summary are documented in [Configuration](docs/configuration.md) and
-[Architecture](docs/architecture.md).
+The Pod annotation contract and the claim axes are documented in
+[Pod contract](docs/pod-contract.md), the `--publish-inventory` L3 summary in
+[Architecture](docs/architecture.md), and every flag in
+[Configuration](docs/configuration.md).
 
 ## Related projects
 
