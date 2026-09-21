@@ -147,8 +147,7 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	}
 	// Prove the claims table is writable before accepting any Pod. Running with an
 	// unwritable state path would persist no release credential, so every claim
-	// this process made would leak its microVM on restart. Failing here instead
-	// keeps the virtual node out of scheduling until the path is fixed.
+	// this process made would leak its microVM on restart.
 	if err := p.persist(); err != nil {
 		return nil, fmt.Errorf("claims state is not writable: %w", err)
 	}
@@ -177,9 +176,7 @@ func (p *Provider) ClaimAddresses() map[string]string {
 // those the node still holds leave quarantine, those it does not are dropped.
 // It deliberately judges nothing else — a row this process created is already
 // known good, and judging it against a listing taken moments earlier is how a
-// live sandbox loses its record. A release whose save failed leaves such a row
-// behind, and reloading it would let a same-key Pod adopt a destroyed sandbox
-// and report it Running.
+// live sandbox loses its record.
 //
 // A failed listing is NOT an empty list — the 2026-05-15 rule — so nothing is
 // dropped when sandboxd cannot be read. Unverified rows stay quarantined

@@ -50,8 +50,7 @@ const (
 	sandboxdMaxIdleConns    = 64
 	sandboxdIdleConnTimeout = 90 * time.Second
 
-	// claimVerifyInterval is how often an unverified claims table is re-checked
-	// against the node. It stops once everything is vouched for.
+	// claimVerifyInterval stops once everything is vouched for.
 	claimVerifyInterval = 15 * time.Second
 
 	// leaseWatchInterval bounds how stale a reaped sandbox's Running status can
@@ -64,27 +63,26 @@ const (
 )
 
 func main() {
-	var (
-		nodeName         = flag.String("node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name (must differ from the physical node and any co-located vk-cocoon node)")
-		nodeIP           = flag.String("node-ip", envOr("VK_NODE_IP", ""), "node InternalIP advertised to the apiserver")
-		listenAddr       = flag.String("listen-addr", envOr("VK_LISTEN_ADDR", ":10260"), "kubelet API listen address (must differ from a co-located vk-cocoon, which uses :10250)")
-		tlsCert          = flag.String("tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; a self-signed in-memory cert is used when unset)")
-		tlsKey           = flag.String("tls-key", os.Getenv("VK_TLS_KEY"), "kubelet API TLS key")
-		nodeCPU          = flag.String("node-cpu", envOr("VK_NODE_CPU", "4000"), "advertised node CPU capacity (a scheduling budget; the real resource is sandboxd's)")
-		nodeMem          = flag.String("node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
-		nodePods         = flag.String("node-pods", envOr("VK_NODE_PODS", "2000"), "advertised node max pods")
-		kubeQPS          = flag.Float64("kube-api-qps", 200, "client-go QPS for the kubernetes clients (status pushes, delete authorization, inventory publish)")
-		kubeBurst        = flag.Int("kube-api-burst", 400, "client-go burst on top of --kube-api-qps")
-		sandboxdURL      = flag.String("sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
-		sandboxdAddr     = flag.String("sandboxd-advertise-addr", envOr("SANDBOXD_ADVERTISE_ADDR", ""), "sandboxd advertise address (host:port) published in NodeInventory for claim routing; defaults to the host:port of --sandboxd-url")
-		tokenFile        = flag.String("sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
-		statePath        = flag.String("state-path", envOr("VK_STATE_PATH", "/var/lib/vk-sandbox/claims.json"), "claims table persistence path")
-		orphanInterval   = flag.Duration("orphan-scan-interval", 60*time.Second, "audit-only orphan scan cadence (0 disables)")
-		publishInventory = flag.Bool("publish-inventory", false, "server-side-apply this node's NodeInventory for the L3 aggregation layer")
-		publishInterval  = flag.Duration("publish-interval", 30*time.Second, "NodeInventory publish cadence")
-		podLabels        = flag.String("node-labels", "sandbox.cocoonstack.io/runtime=sandboxd", "comma-separated extra node labels key=value")
-		showVersion      = flag.Bool("version", false, "print build version and exit")
-	)
+	var o options
+	flag.StringVar(&o.nodeName, "node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name (must differ from the physical node and any co-located vk-cocoon node)")
+	flag.StringVar(&o.nodeIP, "node-ip", envOr("VK_NODE_IP", ""), "node InternalIP advertised to the apiserver")
+	flag.StringVar(&o.listenAddr, "listen-addr", envOr("VK_LISTEN_ADDR", ":10260"), "kubelet API listen address (must differ from a co-located vk-cocoon, which uses :10250)")
+	flag.StringVar(&o.tlsCert, "tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; a self-signed in-memory cert is used when unset)")
+	flag.StringVar(&o.tlsKey, "tls-key", os.Getenv("VK_TLS_KEY"), "kubelet API TLS key")
+	flag.StringVar(&o.nodeCPU, "node-cpu", envOr("VK_NODE_CPU", "4000"), "advertised node CPU capacity (a scheduling budget; the real resource is sandboxd's)")
+	flag.StringVar(&o.nodeMem, "node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
+	flag.StringVar(&o.nodePods, "node-pods", envOr("VK_NODE_PODS", "2000"), "advertised node max pods")
+	flag.Float64Var(&o.kubeQPS, "kube-api-qps", 200, "client-go QPS for the kubernetes clients (status pushes, delete authorization, inventory publish)")
+	flag.IntVar(&o.kubeBurst, "kube-api-burst", 400, "client-go burst on top of --kube-api-qps")
+	flag.StringVar(&o.sandboxdURL, "sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
+	flag.StringVar(&o.sandboxdAddr, "sandboxd-advertise-addr", envOr("SANDBOXD_ADVERTISE_ADDR", ""), "sandboxd advertise address (host:port) published in NodeInventory for claim routing; defaults to the host:port of --sandboxd-url")
+	flag.StringVar(&o.tokenFile, "sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
+	flag.StringVar(&o.statePath, "state-path", envOr("VK_STATE_PATH", "/var/lib/vk-sandbox/claims.json"), "claims table persistence path")
+	flag.DurationVar(&o.orphanInterval, "orphan-scan-interval", 60*time.Second, "audit-only orphan scan cadence (0 disables)")
+	flag.BoolVar(&o.publishInventory, "publish-inventory", false, "server-side-apply this node's NodeInventory for the L3 aggregation layer")
+	flag.DurationVar(&o.publishInterval, "publish-interval", 30*time.Second, "NodeInventory publish cadence")
+	flag.StringVar(&o.podLabels, "node-labels", "sandbox.cocoonstack.io/runtime=sandboxd", "comma-separated extra node labels key=value")
+	showVersion := flag.Bool("version", false, "print build version and exit")
 	flag.Parse()
 
 	if *showVersion {
@@ -92,23 +90,12 @@ func main() {
 		return
 	}
 
-	logger := ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-sandbox")
-	o := &options{
-		nodeName: *nodeName, nodeIP: *nodeIP, listenAddr: *listenAddr,
-		tlsCert: *tlsCert, tlsKey: *tlsKey,
-		nodeCPU: *nodeCPU, nodeMem: *nodeMem, nodePods: *nodePods,
-		sandboxdURL: *sandboxdURL, sandboxdAddr: *sandboxdAddr, tokenFile: *tokenFile,
-		statePath: *statePath, podLabels: *podLabels,
-		orphanInterval: *orphanInterval, publishInterval: *publishInterval,
-		publishInventory: *publishInventory,
-		kubeQPS:          float32(*kubeQPS), kubeBurst: *kubeBurst,
-		log: logger,
-	}
+	o.log = ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-sandbox")
 	if err := o.run(); err != nil {
-		logger.Error(err, "vk-sandbox exited")
+		o.log.Error(err, "vk-sandbox exited")
 		os.Exit(1)
 	}
-	logger.Info("vk-sandbox exiting")
+	o.log.Info("vk-sandbox exiting")
 }
 
 type options struct {
@@ -129,7 +116,7 @@ type options struct {
 	orphanInterval   time.Duration
 	publishInterval  time.Duration
 	publishInventory bool
-	kubeQPS          float32
+	kubeQPS          float64
 	kubeBurst        int
 
 	log logr.Logger
@@ -149,7 +136,7 @@ func (o *options) run() error {
 	}
 	// client-go defaults to QPS=5/Burst=10, which queues ~400s of client-side
 	// throttling when the advertised 2000 pods push status at once (#1).
-	cfg.QPS = o.kubeQPS
+	cfg.QPS = float32(o.kubeQPS)
 	cfg.Burst = o.kubeBurst
 	clientset, err := kubernetes.NewForConfig(cfg)
 	if err != nil {

@@ -21,9 +21,7 @@ type NodeInfo struct {
 	Pools   []extv1beta1.PoolCapacity
 }
 
-// NodeInfoSource yields this node's NodeInfo. The address is a static
-// configuration value (the node's sandboxd advertise address); the pools are read
-// live from sandboxd.
+// NodeInfoSource yields this node's NodeInfo.
 type NodeInfoSource interface {
 	NodeInfo(ctx context.Context) (NodeInfo, error)
 }

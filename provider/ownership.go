@@ -27,8 +27,7 @@ const (
 // authVerdict is the destroy-authorization decision for one pod deletion.
 type authVerdict int
 
-// controllerOwnerRef returns the pod's controller owner reference, or nil for
-// bare pods.
+// controllerOwnerRef returns the pod's controller owner reference, or nil for bare pods.
 func controllerOwnerRef(pod *corev1.Pod) *metav1.OwnerReference {
 	for i := range pod.OwnerReferences {
 		ref := &pod.OwnerReferences[i]
