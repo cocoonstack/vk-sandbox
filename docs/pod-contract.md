@@ -37,7 +37,7 @@ verbatim, so one contract spans the L2 claim gateway and this provider.
 | `sandbox.cocoonstack.io/net` | in | Claim network axis; the operator's mutator sets it from the pod template (default `none`), empty means the sandboxd default |
 | `sandbox.cocoonstack.io/size` | in | Claim VM size axis; the operator's mutator derives it from the first container's requests (`small`/`medium`/`large`), empty means the sandboxd default |
 | `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds. Absent means 86400, sandboxd's 24h maximum for ordinary claims. An explicit `0` selects sandboxd's five-minute default for ephemeral SDK claims. A non-integer or negative value fails the create |
-| `sandbox.cocoonstack.io/claim-id` | out | Written back by the provider: the sandboxd claim id backing the Pod |
+| `sandbox.cocoonstack.io/claim-id` | out | Published by the provider on the status push: the sandboxd claim id backing the Pod. The provider's own Pod view may drop it after a resync |
 
 The release token is deliberately **not** exposed on the Pod -- it stays in
 the node's claims table, which is what keeps VM destruction an authorized,
@@ -77,9 +77,11 @@ The full delete-authorization decision table is in
 
 If claim persistence and its compensating release both fail, the provider
 retains the Pod and release credential. Its cached claim-id annotation differs
-from the Kubernetes Pod, so virtual-kubelet calls `UpdatePod` on retry. That
-path returns the stranded claim before creating a replacement; Pod deletion
-can still find and release the retained claim through `GetPod`.
+from the Kubernetes Pod, so virtual-kubelet calls `UpdatePod` on its next
+resync. That path returns the stranded claim before creating a replacement;
+`DeletePod` finds the retained claim by its pod key. The retry rides the
+resync, which stops for a Pod that has gone `Failed`, so a template with
+`restartPolicy: Never` does not get it.
 
 ## Lost claim responses
 

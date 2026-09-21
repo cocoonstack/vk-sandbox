@@ -51,7 +51,7 @@ account in `sandbox-system` and grants:
 - the virtual-kubelet essentials -- nodes and `nodes/status`, pods and
   `pods/status`, including Pod deletion to complete termination, events,
   leases, plus read access to secrets, configmaps, and services;
-- `get` on the owner CR, which authorizes release for controller-owned Pods;
+- `get` on the owner CR, the read every controller-owned release is decided from;
 - write access to `nodeinventories` for `--publish-inventory`.
 
 ```bash
