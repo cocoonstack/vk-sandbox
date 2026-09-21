@@ -50,8 +50,7 @@ const (
 	sandboxdMaxIdleConns    = 64
 	sandboxdIdleConnTimeout = 90 * time.Second
 
-	// claimVerifyInterval is how often an unverified claims table is re-checked
-	// against the node. It stops once everything is vouched for.
+	// claimVerifyInterval stops once everything is vouched for.
 	claimVerifyInterval = 15 * time.Second
 
 	// leaseWatchInterval bounds how stale a reaped sandbox's Running status can

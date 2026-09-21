@@ -21,7 +21,6 @@ import (
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
-// phaseRunning is the sandbox phase a live claim reports in the inventory.
 const phaseRunning = "Running"
 
 // ClaimAddresses exposes the provider's sandboxd id → address view.
@@ -78,11 +77,9 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 }
 
 // Publisher server-side-applies this node's single NodeInventory object on a slow
-// cadence: its live entries (from a NodeLiveSource) plus the node's sandboxd
-// advertise address and per-pool warm capacity (from a NodeInfoSource). This is
-// the entire L3 write path for this node — one O(nodes) apply, no per-sandbox
-// etcd object. It composes the operator's stable scale.InventoryApplier so the
-// SSA/RESTMapper details live in exactly one place.
+// cadence: its live entries (from a NodeLiveSource) plus the node's sandboxd advertise
+// address and per-pool warm capacity (from a NodeInfoSource). This is the entire L3
+// write path for this node — one O(nodes) apply, no per-sandbox etcd object.
 type Publisher struct {
 	node    string
 	live    scale.NodeLiveSource
@@ -97,9 +94,7 @@ func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, a
 	return &Publisher{node: node, live: live, info: info, applier: applier, log: log}
 }
 
-// Publish reads the node's live sandboxes and node info and server-side-applies a
-// single NodeInventory object for the node, returning the number of summarized
-// entries.
+// Publish server-side-applies this node's live sandboxes as a NodeInventory object, returning the summarized entry count.
 func (p *Publisher) Publish(ctx context.Context) (int, error) {
 	entries, err := p.live.LiveSandboxes(ctx)
 	if err != nil {

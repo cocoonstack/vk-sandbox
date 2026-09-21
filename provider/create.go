@@ -249,8 +249,6 @@ func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim
 	return fmt.Errorf("persist claim for %s: %w", key, persistErr)
 }
 
-// pushRunning stamps the claim identity and Running status onto a copy of the
-// pod and notifies the kubelet.
 func (p *Provider) pushRunning(pod *corev1.Pod, c Claim) {
 	out := podWithClaim(pod, c.ID)
 	out.Status = runningStatus(out, c)
@@ -265,8 +263,7 @@ func (p *Provider) releaseDetached(ctx context.Context, c Claim) error {
 	return p.client.Release(ctx, c.ID, c.Token)
 }
 
-// withdrawClaim removes the claim and pod entries together, and only while the
-// claim is still the one the caller stored.
+// withdrawClaim removes the claim and pod entries together.
 func (p *Provider) withdrawClaim(key, id string) {
 	p.mu.Lock()
 	if cur, ok := p.claims[key]; ok && cur.ID == id {

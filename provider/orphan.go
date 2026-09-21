@@ -88,7 +88,6 @@ func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
 // quarantine — a claim the node still holds must become usable again.
 func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Duration) {
 	runTicker(ctx, interval, func() bool {
-		// Keep polling until the table is vouched for and nothing is quarantined.
 		return !p.VerifyClaimsAgainstNode(ctx) || p.hasQuarantined()
 	})
 }
