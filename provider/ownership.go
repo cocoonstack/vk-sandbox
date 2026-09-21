@@ -20,8 +20,7 @@ const (
 	// claim alive for a same-key replacement pod to adopt (pod churn, eviction
 	// storms, provider restart, or an unverifiable owner query).
 	authPreserve authVerdict = iota
-	// authRelease: the owner CR is confirmed gone or in teardown — releasing
-	// the node-local sandbox is authorized.
+	// authRelease permits teardown under the owner or bare-Pod contract.
 	authRelease
 )
 
@@ -81,9 +80,8 @@ func pluralResource(lower string) string {
 //   - Pod deletion alone is NEVER VM authority. Node-NotReady taint evictions
 //     delete every pod on a node while the sandboxes keep serving users.
 //   - Release is authorized only when the pod's controller owner CR (the
-//     agents.x-k8s.io Sandbox created by sandbox-operator) is confirmed
-//     gone — a structured NotFound naming the owner in Details.Name — or is in
-//     teardown (non-zero deletionTimestamp).
+//     agents.x-k8s.io Sandbox created by sandbox-operator) is confirmed gone,
+//     has a different UID, has a deletionTimestamp, or reports SandboxExpired.
 //   - An endpoint-level 404 without Details.Name means the GVR guess was wrong,
 //     not that the owner is gone: preserve.
 //   - Any query error preserves: better to leak a warm sandbox than to destroy

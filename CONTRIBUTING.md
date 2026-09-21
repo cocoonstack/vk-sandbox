@@ -10,7 +10,7 @@ Thanks for your interest in improving vk-sandbox!
 
 ## Developer setup
 
-Go 1.26+ is required.
+Go 1.27+ is required.
 
 ```bash
 make all          # deps fmt lint test build
@@ -23,7 +23,7 @@ make build-linux  # cross-compile the node binary
 
 - Keep changes focused; unrelated refactors belong in their own PR.
 - Commit messages: a one-line summary, optionally followed by a body that
-  explains *why* the change is needed.
+  explains *why* the change is needed. Do not add trailers.
 - The seven provider contracts in the README (delete authorization, GVR
   derivation, audit-only orphan GC, stale-UID guard, L0 API hygiene, published
   lease expiry, durable release credentials) are load-bearing and pinned by
@@ -31,13 +31,6 @@ make build-linux  # cross-compile the node binary
   weaken those tests to make a change pass — if a contract must change, argue
   it in the PR description first.
 - CI must be green.
-
-## Developer Certificate of Origin
-
-Contributions are accepted under the
-[Developer Certificate of Origin](https://developercertificate.org/). Sign off
-your commits (`git commit -s`) to certify that you have the right to submit
-the work under this repository's license.
 
 ## License
 

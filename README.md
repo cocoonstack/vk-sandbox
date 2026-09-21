@@ -24,9 +24,9 @@ flowchart LR
 ```
 
 One virtual node fronts one sandboxd. A sandbox Pod scheduled here becomes a
-warm claim; the Pod's IP is the sandbox VM's address; deleting the owning
-`Sandbox` CR destroys the VM, and so does a bare Pod (no controller owner)
-deleting itself or the owner going into teardown or being replaced.
+warm claim; the Pod's IP is the host part of sandboxd's `owner_addr`. The VM
+is released when its owner is deleted, expires, enters teardown, or is
+replaced, or when a bare Pod (no controller owner) is deleted.
 
 ## Quick start
 
@@ -34,6 +34,7 @@ deleting itself or the owner going into teardown or being replaced.
 vk-sandbox \
   --node-name vk-sandboxd-node1 \
   --sandboxd-url http://127.0.0.1:7777 \
+  --sandboxd-advertise-addr "<node-address>:7777" \
   --sandboxd-token-file /etc/sandboxd/api-token \
   --state-path /var/lib/vk-sandbox/claims.json \
   --publish-inventory
@@ -42,6 +43,8 @@ vk-sandbox \
 `KUBECONFIG` (or in-cluster config) must reach the cluster; see
 [manifests/](manifests/) for the RBAC
 the destroy-authorization read needs (get on `sandboxes.agents.x-k8s.io`).
+Replace `<node-address>` with the address the operator can reach; the local
+claim URL can remain on loopback.
 
 The kubelet exec/logs/port-forward surfaces are intentionally not served —
 interactive access goes through the sandbox SDK and preview URLs.
@@ -52,10 +55,11 @@ The load-bearing rules, carried over from the production vk-cocoon provider and
 pinned by intent tests:
 
 1. **Pod deletion is not VM authority.** Node-NotReady taint evictions delete
-   every pod on a node while the VMs keep serving users. `DeletePod` releases
-   the sandbox only when the owning `Sandbox` CR is **confirmed gone** (a
-   structured NotFound naming it in `Details.Name`) or **in teardown**
-   (deletionTimestamp set). Everything else preserves the claim, and a
+   every pod on a node while the VMs keep serving users. For a controller-owned
+   Pod, `DeletePod` releases only when the owning `Sandbox` is **confirmed gone** (a
+   structured NotFound naming it in `Details.Name`), replaced by another UID,
+   **in teardown** (deletionTimestamp set), or **expired** (Ready reason
+   `SandboxExpired`). Otherwise the claim is preserved, and a
    same-name replacement pod **adopts it in place** — no second claim, same VM.
 2. **No naive kind pluralization.** The owner GVR is derived with the es/ies
    rules (`Sandbox`→`sandboxes`); an endpoint-level 404 *without*
@@ -69,12 +73,10 @@ pinned by intent tests:
 5. **L0 API hygiene.** Status reads are served from the provider's own table;
    no control-loop LIST hits the apiserver.
 6. **Lease expiry is published, never discovered.** The node grants a lease at
-   claim time and its archive lifecycle may rewrite it; the provider refreshes
-   the deadline from the node's listing and the reaper destroys the VM at the
-   deadline; a watch pushes the Pod
-   `Failed` then, because virtual-kubelet never polls an async provider and a
-   dead workload must not keep reading as Running.
-
+   claim time and its archive lifecycle may rewrite it. After the cached
+   deadline, the watcher refreshes a still-listed claim or publishes `Failed`
+   on confirmed absence; listing errors defer the decision. virtual-kubelet
+   never polls an asynchronous provider.
 7. **Release credentials survive restarts.** The claim table (sandbox id +
    release token) persists to a 0600 state file; a provider restart keeps the
    authority to tear down exactly what it delivered.
@@ -82,13 +84,6 @@ pinned by intent tests:
 The Pod annotation contract, the claim axes, and the `--publish-inventory` L3
 summary are documented in [Configuration](docs/configuration.md) and
 [Architecture](docs/architecture.md).
-
-## Development
-
-```bash
-make all        # deps fmt lint test build
-make race lint
-```
 
 ## Related projects
 
@@ -99,6 +94,15 @@ make race lint
 - [vk-cocoon](https://github.com/cocoonstack/vk-cocoon) — the sibling provider
   that runs full Cocoon microVM pods
 - [cocoon](https://github.com/cocoonstack/cocoon) — the microVM engine underneath
+
+## Development
+
+```bash
+make build
+make test
+make lint
+make fmt
+```
 
 ## Community
 

@@ -11,7 +11,6 @@ import (
 
 func BenchmarkCommitClaim(b *testing.B) {
 	p, err := New(b.Context(), Config{
-		NodeName:  "bench",
 		StatePath: filepath.Join(b.TempDir(), "claims.json"),
 		Logger:    logr.Discard(),
 	})

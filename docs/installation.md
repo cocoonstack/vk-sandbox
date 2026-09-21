@@ -49,10 +49,9 @@ Apply the shipped RBAC once per cluster. It creates the `vk-sandbox` service
 account in `sandbox-system` and grants:
 
 - the virtual-kubelet essentials -- nodes and `nodes/status`, pods and
-  `pods/status`, events, leases, plus read access to secrets, configmaps, and
-  services;
-- `get` on the owner CR, which is the destroy-authorization read every
-  release is gated on;
+  `pods/status`, including Pod deletion to complete termination, events,
+  leases, plus read access to secrets, configmaps, and services;
+- `get` on the owner CR, which authorizes release for controller-owned Pods;
 - write access to `nodeinventories` for `--publish-inventory`.
 
 ```bash
@@ -83,9 +82,9 @@ SANDBOXD_TOKEN_FILE=/etc/vk-sandbox/sandboxd-token
 VK_STATE_PATH=/var/lib/vk-sandbox/claims.json
 ```
 
-Two rules are not optional when vk-cocoon is co-located on the same host:
-`VK_NODE_NAME` must differ from the vk-cocoon node name, and `VK_LISTEN_ADDR`
-must not be vk-cocoon's `:10250`.
+`VK_NODE_NAME` must differ from the physical Kubernetes node and any
+co-located vk-cocoon node. `VK_LISTEN_ADDR` must not conflict with the host
+kubelet or vk-cocoon's `:10250`.
 
 Install the sandboxd node token and the kubeconfig the unit expects:
 
@@ -113,8 +112,11 @@ To publish this node's inventory to the operator's aggregated apiserver, add
 the flag to the unit's `ExecStart` (or run the binary directly):
 
 ```bash
-/usr/local/bin/vk-sandbox --publish-inventory
+/usr/local/bin/vk-sandbox --publish-inventory --sandboxd-advertise-addr "<node-address>:7777"
 ```
+
+Replace `<node-address>` with an address reachable from the operator. The
+default loopback claim URL is only reachable on the sandboxd host.
 
 ## Run it: in-cluster
 
@@ -122,8 +124,20 @@ The binary prefers in-cluster configuration, so the same image can run as a
 DaemonSet on the sandboxd nodes with `serviceAccountName: vk-sandbox`,
 `hostNetwork: true` (so `SANDBOXD_URL` can stay on loopback), the sandboxd
 token mounted from a Secret, and `VK_STATE_PATH` on a `hostPath` volume so the
-release credentials survive a Pod restart. Set `VK_NODE_NAME` from
-`spec.nodeName` via the downward API to keep one virtual node per host.
+release credentials survive a Pod restart. Derive a distinct virtual node
+name from the physical node; assigning `spec.nodeName` directly would make
+virtual-kubelet update the real node. Use these container environment entries
+in this order so Kubernetes expands the physical name before adding the suffix:
+
+```yaml
+env:
+  - name: VK_HOST_NODE_NAME
+    valueFrom:
+      fieldRef:
+        fieldPath: spec.nodeName
+  - name: VK_NODE_NAME
+    value: "$(VK_HOST_NODE_NAME)-sandboxd"
+```
 
 ## Verify
 
@@ -142,7 +156,7 @@ kubectl get nodeinventories.extensions.agents.x-k8s.io <VK_NODE_NAME> -o yaml
 ```
 
 Then create a `Sandbox` with the sandboxd runtime and watch the Pod go
-`Running` with the microVM's address as its Pod IP -- see
+`Running` with the host part of sandboxd's `owner_addr` as its Pod IP -- see
 [Pod contract](pod-contract.md).
 
 ## Development

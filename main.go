@@ -65,7 +65,7 @@ const (
 
 func main() {
 	var (
-		nodeName         = flag.String("node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name (must be distinct from a co-located vk-cocoon node)")
+		nodeName         = flag.String("node-name", envOr("VK_NODE_NAME", "vk-sandboxd"), "virtual node name (must differ from the physical node and any co-located vk-cocoon node)")
 		nodeIP           = flag.String("node-ip", envOr("VK_NODE_IP", ""), "node InternalIP advertised to the apiserver")
 		listenAddr       = flag.String("listen-addr", envOr("VK_LISTEN_ADDR", ":10260"), "kubelet API listen address (must differ from a co-located vk-cocoon, which uses :10250)")
 		tlsCert          = flag.String("tls-cert", os.Getenv("VK_TLS_CERT"), "kubelet API TLS certificate (optional; a self-signed in-memory cert is used when unset)")
@@ -179,7 +179,6 @@ func (o *options) run() error {
 	sdClient := sandboxd.New(o.sandboxdURL, token, sandboxd.WithHTTPClient(hc))
 
 	p, err := provider.New(ctx, provider.Config{
-		NodeName:  o.nodeName,
 		Client:    sdClient,
 		Lister:    sdClient,
 		Dynamic:   dyn,

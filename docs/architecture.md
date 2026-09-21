@@ -44,8 +44,9 @@ CreatePod
                    annotation sandbox.cocoonstack.io/claim-id = <claim id>
 ```
 
-`UpdatePod` records the newest Pod object and takes no VM action -- sandbox
-Pods are immutable at the runtime level. `GetPod`, `GetPods`, and
+`UpdatePod` retries creation for a tentative claim whose persistence and
+compensating release failed. Otherwise it records the newest Pod object --
+running sandbox Pods are immutable at the runtime level. `GetPod`, `GetPods`, and
 `GetPodStatus` are served from the in-memory table, so no control-loop read
 ever hits the apiserver or sandboxd.
 
@@ -58,9 +59,8 @@ kubelet exec path. `GetStatsSummary` returns an empty summary and
 ## Delete authorization: pod deletion is not VM authority
 
 A Node-NotReady taint eviction deletes every Pod on a node while the microVMs
-keep serving users. `DeletePod` therefore never releases on the strength of
-the deletion alone. It reads the Pod's **controller owner reference** through
-the dynamic client and decides:
+keep serving users. For a controller-owned Pod, `DeletePod` reads its owner
+through the dynamic client before deciding; a bare Pod is its own authority:
 
 | Owner state | Verdict |
 |---|---|
@@ -97,8 +97,10 @@ binary requires the flag; only the in-process constructor accepts an empty
 path, for tests.
 
 A claim is durable before it counts: until its own write lands it is invisible
-to status and to adoption, and a create whose write fails returns the sandbox
-rather than reporting Running. At startup the reloaded table is checked against
+to Running status and to adoption. A create whose write fails tries to return
+the sandbox; failed compensation retains the credential for update retries
+or deletion (see [Pod contract](pod-contract.md#failure-and-churn-semantics)).
+At startup the reloaded table is checked against
 the node's live sandboxes and rows the node no longer holds are dropped. A
 failed listing is not an empty list, so an unreadable sandboxd drops nothing —
 the rows are quarantined instead: still releasable, but not adoptable and not
@@ -108,13 +110,10 @@ as a listing succeeds and then stops.
 
 ## Leases
 
-Every claim carries a lease fixed at claim time — 24 hours by default, the
-`ttl-seconds` annotation to override — and nothing in the stack renews one.
-sandboxd's reaper destroys the VM at the deadline, so the provider records the
-deadline returned with each claim (persisted with it) and a small watch pushes
-the Pod `Failed` once it passes. Pushed, not polled: implementing `NotifyPods`
-makes this an asynchronous provider, and virtual-kubelet installs no status
-poller for those — a status that is not published does not exist.
+Ordinary claims request a 24-hour lease by default, with `ttl-seconds` to
+override it, and have no automatic renewal. The provider persists the returned
+deadline and watches for expiry. It pushes terminal status through `NotifyPods`;
+virtual-kubelet installs no status poller for an asynchronous provider.
 
 The cached deadline is not authoritative: the archive lifecycle rewrites a
 claim's lease on the node. `Failed` is terminal, so before publishing it — and
@@ -185,9 +184,9 @@ next tick rebuilds from live state.
 the record plane -- the `agents.x-k8s.io` CRDs, warm pools, admission, the L1
 claim fast path, and the L3 aggregated apiserver. Its runtime mutator is what
 routes a sandbox Pod here (see [Pod contract](pod-contract.md)). vk-sandbox
-owns the node transaction plane and imports the operator's `pkg/scale` for the
-sandboxd client, the selector keys, and the inventory applier. The dependency
-points one way: the operator does not import this repo.
+owns the node transaction plane and imports the operator's `pkg/sandboxd` for
+the client and `pkg/scale` for selector keys and the inventory applier. The
+dependency points one way: the operator does not import this repo.
 
 **[sandbox](https://github.com/cocoonstack/sandbox)** ships sandboxd, the
 node-local daemon holding the warm microVM pools this provider claims from.

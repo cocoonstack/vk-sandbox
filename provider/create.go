@@ -37,10 +37,8 @@ const (
 	AnnClaimID = "sandbox.cocoonstack.io/claim-id"
 
 	// defaultClaimTTLSeconds is requested when a pod carries no TTL annotation:
-	// sandboxd's maxTTL. A pod's sandbox lives until the pod is deleted, and
-	// sending 0 would mean sandboxd's own default — five minutes, sized for
-	// ephemeral SDK claims, after which the reaper destroys the VM under a pod
-	// still reporting Running.
+	// sandboxd's maxTTL. Sending 0 would use sandboxd's five-minute default for
+	// ephemeral SDK claims, too short for a Pod workload.
 	defaultClaimTTLSeconds = 24 * 60 * 60
 )
 
@@ -112,7 +110,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	}
 	p.mu.Lock()
 	p.claims[key] = c
-	p.pods[key] = pod.DeepCopy()
+	p.pods[key] = podWithClaim(pod, c.ID)
 	// Tentative until its own write lands: a concurrent create's snapshot must
 	// not make this claim durable, or the rollback below could not take it back.
 	p.tentative[key] = struct{}{}
@@ -130,13 +128,17 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 
-func (p *Provider) UpdatePod(_ context.Context, pod *corev1.Pod) error {
+func (p *Provider) UpdatePod(ctx context.Context, pod *corev1.Pod) error {
 	key := podKey(pod.Namespace, pod.Name)
 	if !p.podUIDIsCurrent(key, pod) {
 		p.log.Info("ignoring stale UpdatePod for previous pod generation", "pod", key, "uid", pod.UID)
 		return nil
 	}
 	p.mu.Lock()
+	if _, pending := p.tentative[key]; pending {
+		p.mu.Unlock()
+		return p.CreatePod(ctx, pod)
+	}
 	p.pods[key] = pod.DeepCopy()
 	p.mu.Unlock()
 	return nil
@@ -231,7 +233,7 @@ func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 
 // undoUnpersistedClaim hands a just-claimed sandbox back after its release
 // credential could not be stored. A release that also fails keeps the
-// in-memory claim so a later DeletePod can still reach the sandbox.
+// in-memory claim so an update retry or deletion can still reach the sandbox.
 func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim, persistErr error) error {
 	if err := p.releaseDetached(ctx, c); err != nil {
 		p.log.Error(err, "could not return a sandbox whose claim failed to persist; keeping the credential in memory",
@@ -249,11 +251,7 @@ func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim
 // pushRunning stamps the claim identity and Running status onto a copy of the
 // pod and notifies the kubelet.
 func (p *Provider) pushRunning(pod *corev1.Pod, c Claim) {
-	out := pod.DeepCopy()
-	if out.Annotations == nil {
-		out.Annotations = map[string]string{}
-	}
-	out.Annotations[AnnClaimID] = c.ID
+	out := podWithClaim(pod, c.ID)
 	out.Status = runningStatus(out, c)
 	p.notify(out)
 }
@@ -276,6 +274,15 @@ func (p *Provider) withdrawClaim(key, id string) {
 	}
 	delete(p.tentative, key)
 	p.mu.Unlock()
+}
+
+func podWithClaim(pod *corev1.Pod, id string) *corev1.Pod {
+	out := pod.DeepCopy()
+	if out.Annotations == nil {
+		out.Annotations = map[string]string{}
+	}
+	out.Annotations[AnnClaimID] = id
+	return out
 }
 
 func ann(pod *corev1.Pod, key, def string) string {
