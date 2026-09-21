@@ -479,10 +479,7 @@ func TestNewRefusesAnUnwritableClaimsPath(t *testing.T) {
 	if err := os.WriteFile(dir+"/claims.json", []byte(current), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	if _, err := New(t.Context(), Config{StatePath: dir + "/claims.json", Logger: logr.Discard()}); err == nil {
 		t.Fatal("New accepted a state path it cannot write")
@@ -536,10 +533,7 @@ func TestNewFailsWhenTheClaimedAtMigrationCannotBePersisted(t *testing.T) {
 	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	if _, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()}); err == nil {
 		t.Fatal("New succeeded even though the claimedAt migration could not be written")
@@ -553,10 +547,7 @@ func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	var pushed bool
 	p.NotifyPods(t.Context(), func(*corev1.Pod) { pushed = true })
@@ -583,10 +574,7 @@ func TestCreatePodKeepsTheCredentialWhenTheUndoReleaseAlsoFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err == nil {
 		t.Fatal("CreatePod reported success")
@@ -613,10 +601,7 @@ func TestATentativeClaimIsNeverReportedRunning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err == nil {
 		t.Fatal("CreatePod reported success")
@@ -638,10 +623,7 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", ""))
 	p.mu.RLock()
@@ -677,10 +659,7 @@ func TestATentativeClaimCanStillBeReleased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(dir, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+	blockStateWrites(t, dir)
 
 	pod := sandboxPod("ns", "p", "u1", "", "")
 	_ = p.CreatePod(t.Context(), pod)
@@ -1351,6 +1330,13 @@ func sandboxPod(ns, name string, uid types.UID, ownerName string, ownerUID types
 		}}
 	}
 	return pod
+}
+
+func blockStateWrites(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Mkdir(dir+"/claims.json.tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func newTestProvider(t *testing.T, sd *fakeSandboxd, dyn *dynamicfake.FakeDynamicClient, statePath string) *Provider {
