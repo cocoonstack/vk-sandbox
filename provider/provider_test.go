@@ -123,6 +123,32 @@ func TestDeleteReleasesOnOwnerTeardown(t *testing.T) {
 	}
 }
 
+func TestDeleteReleasesWhenTheOwnerExpired(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	owner := ownerSandbox("ns1", "sb-owner", "owner-uid", false)
+	if err := unstructured.SetNestedSlice(owner.Object, []any{map[string]any{
+		"type": "Ready", "status": "False", "reason": "SandboxExpired",
+	}}, "status", "conditions"); err != nil {
+		t.Fatalf("set conditions: %v", err)
+	}
+	p := newTestProvider(t, sd, dynWith(t, owner), "")
+
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	if got := sd.releaseCount(); got != 1 {
+		t.Fatalf("an expired owner keeps its CR under Retain, so its pod deletion is the teardown; releases=%d", got)
+	}
+	if _, ok := p.claimFor("ns1/sb-pod"); ok {
+		t.Fatal("claim must be dropped after authorized release")
+	}
+}
+
 func TestDeletePreservesWhenOwnerUnverifiable(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}

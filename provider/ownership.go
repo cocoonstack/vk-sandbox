@@ -8,8 +8,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	sandboxv1beta1 "github.com/cocoonstack/sandbox-operator/api/v1beta1"
 )
 
 const (
@@ -112,6 +115,9 @@ func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.P
 	if obj.GetDeletionTimestamp() != nil {
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " in teardown (deletionTimestamp set)"
 	}
+	if ownerExpired(obj) {
+		return authRelease, "owner " + ref.Kind + " " + ref.Name + " expired: the operator tore its workload down"
+	}
 	if string(obj.GetUID()) != string(ref.UID) && ref.UID != "" {
 		// Same-name owner with a different UID: the referenced owner generation
 		// is gone and something new took its name. The referenced owner no
@@ -119,6 +125,17 @@ func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.P
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " UID rotated: referenced generation gone"
 	}
 	return authPreserve, "owner " + ref.Kind + " " + ref.Name + " alive: pod deletion is not VM authority"
+}
+
+func ownerExpired(obj *unstructured.Unstructured) bool {
+	conditions, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+	for _, c := range conditions {
+		m, ok := c.(map[string]any)
+		if ok && m["type"] == string(sandboxv1beta1.SandboxConditionReady) {
+			return m["reason"] == sandboxv1beta1.SandboxReasonExpired
+		}
+	}
+	return false
 }
 
 // notFoundName extracts the object name a genuine NotFound status carries in
