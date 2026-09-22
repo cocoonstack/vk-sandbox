@@ -11,9 +11,13 @@ Prerequisites:
   `http://127.0.0.1:7777`), and its node API token;
 - credentials that reach the apiserver -- either an in-cluster service account
   or a kubeconfig on the node;
-- [sandbox-operator](https://github.com/cocoonstack/sandbox-operator)
-  installed, so the `agents.x-k8s.io` CRDs exist and its runtime mutator can
-  route sandbox Pods here.
+- [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)
+  installed, so the `agents.x-k8s.io` CRDs and the controller exist; a
+  SandboxTemplate routes its Pods here by carrying the
+  [Pod contract](pod-contract.md). Install
+  [sandbox-operator](https://github.com/cocoonstack/sandbox-operator) as well
+  when the L3 aggregated apiserver should read this node's `NodeInventory`
+  (`--publish-inventory` needs its `nodeinventories.sandbox.cocoonstack.io` CRD).
 
 ## Prebuilt binary
 
@@ -152,7 +156,7 @@ The node should be `Ready`, labelled `type=virtual-kubelet` and
 `--publish-inventory`, one object named after the node appears:
 
 ```bash
-kubectl get nodeinventories.extensions.agents.x-k8s.io <VK_NODE_NAME> -o yaml
+kubectl get nodeinventories.sandbox.cocoonstack.io <VK_NODE_NAME> -o yaml
 ```
 
 Then create a `Sandbox` with the sandboxd runtime and watch the Pod go

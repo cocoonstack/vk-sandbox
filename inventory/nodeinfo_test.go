@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
+	extv1beta1 "github.com/cocoonstack/sandbox-operator/api/v1beta1"
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 

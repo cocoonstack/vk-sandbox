@@ -180,12 +180,15 @@ next tick rebuilds from live state.
 
 ## Relation to the sibling repos
 
+**[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox)**
+owns the record plane -- the `agents.x-k8s.io` CRDs, warm pools, claims, and
+the controller that turns a Sandbox into a Pod. A SandboxTemplate routes that
+Pod here by carrying the [Pod contract](pod-contract.md) itself.
 **[sandbox-operator](https://github.com/cocoonstack/sandbox-operator)** owns
-the record plane -- the `agents.x-k8s.io` CRDs, warm pools, admission, the L1
-claim fast path, and the L3 aggregated apiserver. Its runtime mutator is what
-routes a sandbox Pod here (see [Pod contract](pod-contract.md)). vk-sandbox
-owns the node transaction plane and imports the operator's `pkg/sandboxd` for
-the client and `pkg/scale` for selector keys and the inventory applier. The
+the L3 aggregated apiserver and the `NodeInventory` CRD
+(`sandbox.cocoonstack.io`) this provider publishes into. vk-sandbox owns the
+node transaction plane and imports the operator's `pkg/sandboxd` for the
+client and `pkg/scale` for selector keys and the inventory applier. The
 dependency points one way: the operator does not import this repo.
 
 **[sandbox](https://github.com/cocoonstack/sandbox)** ships sandboxd, the

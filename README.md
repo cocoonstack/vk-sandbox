@@ -2,8 +2,8 @@
 
 A [virtual-kubelet](https://github.com/virtual-kubelet/virtual-kubelet) that
 serves Kubernetes **agent-sandbox semantics** (`agents.x-k8s.io`, driven by
-[sandbox-operator](https://github.com/cocoonstack/sandbox-operator)) from
-[**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
+[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox))
+from [**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
 hot-sandbox daemon that hands over an already-running microVM in **0.2–0.7 ms**.
 
 **Documentation: [cocoonstack.github.io/vk-sandbox](https://cocoonstack.github.io/vk-sandbox/)**
@@ -17,16 +17,19 @@ runs on the node:
 ```mermaid
 flowchart LR
     K["kubectl / any K8s SDK<br/>(Sandbox / SandboxClaim / WarmPool CRs)"]
-    OP["sandbox-operator<br/>L1 claim fast-path · warm pools · admission<br/>L3 aggregated apiserver"]
+    OP["agent-sandbox controller<br/>Sandbox / SandboxClaim / WarmPool → Pods"]
     VK["vk-sandbox (this repo)<br/>one virtual node per sandboxd"]
     SD["sandboxd<br/>node-local hot pool, sub-ms claims"]
+    L3["sandbox-operator<br/>L3 aggregated apiserver, reads NodeInventory"]
     K --> OP --> VK --> SD
+    VK -. NodeInventory .-> L3
 ```
 
-One virtual node fronts one sandboxd. A sandbox Pod scheduled here becomes a
-warm claim; the Pod's IP is the host part of sandboxd's `owner_addr`. The VM
-is released when its owner is deleted, expires, enters teardown, or is
-replaced, or when a bare Pod (no controller owner) is deleted.
+One virtual node fronts one sandboxd. A sandbox Pod whose template carries the
+[Pod contract](docs/pod-contract.md) schedules here and becomes a warm claim;
+the Pod's IP is the host part of sandboxd's `owner_addr`. The VM is released
+when its owner is deleted, expires, enters teardown, or is replaced, or when a
+bare Pod (no controller owner) is deleted.
 
 ## Quick start
 
@@ -88,8 +91,12 @@ The Pod annotation contract and the claim axes are documented in
 
 ## Related projects
 
+- [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) — the
+  `agents.x-k8s.io` CRDs and the controller that turns a Sandbox into the Pod
+  this provider serves
 - [sandbox-operator](https://github.com/cocoonstack/sandbox-operator) — the
-  Kubernetes control plane that routes sandbox Pods to this provider
+  L3 aggregated apiserver that reads this provider's `NodeInventory`, and the
+  `pkg/sandboxd` client and `pkg/scale` keys this repo imports
 - [sandbox](https://github.com/cocoonstack/sandbox) — sandboxd, the node-local
   hot pool this provider claims from, plus silkd and the SDKs
 - [vk-cocoon](https://github.com/cocoonstack/vk-cocoon) — the sibling provider
