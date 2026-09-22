@@ -14,6 +14,41 @@ live index (`Sandboxes`) and warm-pool capacity (`Info`) all come from
 contract has exactly one home. The same repo supplies `pkg/scale`'s selector
 keys and the `InventoryApplier` used for the NodeInventory apply.
 
+## The contracts this provider keeps
+
+The load-bearing rules, carried over from the production vk-cocoon provider and
+pinned by intent tests:
+
+1. **Pod deletion is not VM authority.** Node-NotReady taint evictions delete
+   every pod on a node while the VMs keep serving users. For a controller-owned
+   Pod, `DeletePod` releases only when the owning `Sandbox` is **confirmed gone** (a
+   structured NotFound naming it in `Details.Name`), replaced by another UID,
+   **in teardown** (deletionTimestamp set), or **expired** (Ready reason
+   `SandboxExpired`). Otherwise the claim is preserved, and a
+   same-name replacement pod **adopts it in place** — no second claim, same VM. See
+   [delete authorization](#delete-authorization-pod-deletion-is-not-vm-authority).
+2. **No naive kind pluralization.** The owner GVR is derived with the es/ies
+   rules (`Sandbox`→`sandboxes`); an endpoint-level 404 *without*
+   `Details.Name` is treated as "GVR guess wrong", never as "owner deleted".
+   (A naive `+"s"` once destroyed a live-owner VM.)
+3. **Audit-only orphan GC.** Background reconciliation can't prove user
+   intent, so the orphan scan only reports; it never releases. A failed
+   sandboxd list is **not** an empty list — the cycle is skipped. See
+   [audit-only orphan scan](#audit-only-orphan-scan).
+4. **Stale-UID guard.** Lifecycle requests carrying a previous pod
+   generation's UID are ignored.
+5. **L0 API hygiene.** Status reads are served from the provider's own table;
+   no control-loop LIST hits the apiserver.
+6. **Lease expiry is published, never discovered.** The node grants a lease at
+   claim time and its archive lifecycle may rewrite it. After the cached
+   deadline, the watcher refreshes a still-listed claim or publishes `Failed`
+   on confirmed absence; listing errors defer the decision. virtual-kubelet
+   never polls an asynchronous provider. See [leases](#leases).
+7. **Release credentials survive restarts.** The claim table (sandbox id +
+   release token) persists to a 0600 state file; a provider restart keeps the
+   authority to tear down exactly what it delivered. See
+   [claims table persistence](#claims-table-persistence).
+
 ## The claim path
 
 ```

@@ -47,6 +47,9 @@ Kubernetes control plane                    cocoon node
   the binary accepts, plus the claims state file
 - [Pod contract](pod-contract.md) -- the annotations, node labels, and taint
   that route a sandbox Pod here and what the provider writes back
+- [Security model](security.md) -- trust boundaries and how to report a
+  vulnerability
+- [Roadmap](roadmap.md) -- what comes next, by priority
 
 ## Repository
 
