@@ -36,7 +36,7 @@ sudo install -m 0755 vk-sandbox /usr/local/bin/
 git clone https://github.com/cocoonstack/vk-sandbox.git
 cd vk-sandbox
 make build                 # -> ./vk-sandbox
-make build-linux           # -> ./vk-sandbox-linux-amd64 (static, CGO off)
+make GOOS=linux GOARCH=amd64 build   # -> ./vk-sandbox-linux-amd64 (static, CGO off)
 sudo install -m 0755 ./vk-sandbox /usr/local/bin/
 ```
 
@@ -167,5 +167,5 @@ Then create a `Sandbox` with the sandboxd runtime and watch the Pod go
 
 ```bash
 make all        # deps fmt lint test build
-make race lint
+make test lint
 ```

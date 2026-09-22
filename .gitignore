@@ -1,6 +1,8 @@
-/bin/
-/dist/
-/vk-sandbox
-/vk-sandbox-linux-*
+bin/
+dist/
+*.out
 *.test
 coverage.out
+/vk-sandbox
+/vk-sandbox-*
+.claude/

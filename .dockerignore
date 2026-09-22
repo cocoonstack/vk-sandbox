@@ -1,0 +1,8 @@
+.git
+.github
+bin
+dist
+coverage.out
+vk-sandbox
+vk-sandbox-*
+*.log
