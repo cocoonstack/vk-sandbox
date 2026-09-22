@@ -3,6 +3,8 @@
 bin
 dist
 coverage.out
+coverage.html
+coverage.txt
 vk-sandbox
 vk-sandbox-*
 *.log

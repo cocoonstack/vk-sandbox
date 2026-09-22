@@ -190,6 +190,7 @@ provider claims table --------+       (name = claim_ref, else sandboxd id;
   (address per claim id)              ID = sandboxd claim id;
                                       phase = Running | Hibernated;
                                       deadline = the row's lease end;
+                                      claimedAt = the row's first grant;
                                       address from this node's own claim)
 
 sandboxd GET /v1/info --------> NodeInfoSource --> {Address, Pools[]}

@@ -21,8 +21,6 @@ import (
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
-const phaseRunning = "Running"
-
 // ClaimAddresses exposes the provider's sandboxd id → address view.
 type ClaimAddresses interface {
 	ClaimAddresses() map[string]string
@@ -54,9 +52,9 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 	for _, row := range listed {
 		name := row.ClaimRef
 		name = cmp.Or(name, row.ID)
-		phase := phaseRunning
+		phase := scale.PhaseRunning
 		if row.Hibernated {
-			phase = "Hibernated"
+			phase = scale.PhaseHibernated
 		}
 		out = append(out, scale.InventoryEntry{
 			Name:      name,
