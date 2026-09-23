@@ -1074,17 +1074,22 @@ func TestAVouchedForSandboxIsAdoptedOnTheSamePass(t *testing.T) {
 	}
 }
 
-func TestClaimCarriesItsPodKey(t *testing.T) {
+func TestTheClaimCarriesThePodAnnotationsAndKey(t *testing.T) {
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{Client: sd, Logger: logr.Discard()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err != nil {
+	pod := sandboxPod("ns", "p", "u", "", "")
+	pod.Annotations[AnnNet] = "egress"
+	pod.Annotations[AnnSize] = "large"
+	pod.Annotations[AnnTTLSeconds] = "600"
+	if err := p.CreatePod(t.Context(), pod); err != nil {
 		t.Fatal(err)
 	}
-	if sd.lastSpec.ClaimRef != "ns/p" {
-		t.Errorf("ClaimRef = %q, want %q", sd.lastSpec.ClaimRef, "ns/p")
+	want := sandboxd.ClaimSpec{Template: "base:24.04", Net: "egress", Size: "large", TTLSeconds: 600, ClaimRef: "ns/p"}
+	if sd.lastSpec != want {
+		t.Errorf("ClaimSpec = %+v, want %+v", sd.lastSpec, want)
 	}
 }
 
