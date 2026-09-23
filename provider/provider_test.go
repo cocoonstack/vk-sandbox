@@ -531,7 +531,7 @@ func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
 	p.claims["ns/p"] = c
 	p.mu.Unlock()
 
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u2", "", "")); err != nil {
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err != nil {
 		t.Fatalf("adopt CreatePod: %v", err)
 	}
 	adopted, _ := p.claimFor("ns/p")
@@ -1503,6 +1503,130 @@ func TestABarePodDoesNotAdoptAPreservedClaim(t *testing.T) {
 	}
 	p.recheckOwners(ctx, time.Now(), time.Minute)
 	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the preserved sandbox was not released: %v", sd.releases)
+	}
+}
+
+func TestARestartDoesNotHandAPodOfAnotherOwnerItsPredecessorsSandbox(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		prev, next *corev1.Pod
+	}{
+		{"new owner generation", sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid"), sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid-2")},
+		{"new bare pod", sandboxPod("ns1", "sb-pod", "uid-1", "", ""), sandboxPod("ns1", "sb-pod", "uid-2", "", "")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			path := t.TempDir() + "/claims.json"
+			sd := &fakeSandboxd{}
+			dyn := dynWith(t)
+			p1 := newTestProvider(t, sd, dyn, path)
+			if err := p1.CreatePod(ctx, tc.prev); err != nil {
+				t.Fatalf("CreatePod: %v", err)
+			}
+			old, _ := p1.claimFor("ns1/sb-pod")
+
+			p2 := newTestProvider(t, sd, dyn, path)
+			if err := p2.CreatePod(ctx, tc.next); err != nil {
+				t.Fatalf("CreatePod after the restart: %v", err)
+			}
+			c, ok := p2.claimFor("ns1/sb-pod")
+			if !ok || c.ID == old.ID || sd.claimCount() != 2 {
+				t.Fatalf("the successor adopted its predecessor's sandbox across a restart: %+v ok=%v claims=%d", c, ok, sd.claimCount())
+			}
+			p2.recheckOwners(ctx, time.Now(), time.Minute)
+			if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+				t.Fatalf("the predecessor's sandbox was not released: %v", sd.releases)
+			}
+		})
+	}
+}
+
+func TestARestartStillHandsASameOwnerReplacementItsSandbox(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t)
+	p1 := newTestProvider(t, sd, dyn, path)
+	if err := p1.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	old, _ := p1.claimFor("ns1/sb-pod")
+
+	p2 := newTestProvider(t, sd, dyn, path)
+	if err := p2.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod after the restart: %v", err)
+	}
+	c, ok := p2.claimFor("ns1/sb-pod")
+	if !ok || c.ID != old.ID || sd.claimCount() != 1 || sd.releaseCount() != 0 {
+		t.Fatalf("a same-owner replacement lost its sandbox across a restart: %+v ok=%v claims=%d releases=%v", c, ok, sd.claimCount(), sd.releases)
+	}
+}
+
+func TestARestartKeepsTheSandboxOfAPodWhoseOwnerChanged(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t)
+	p1 := newTestProvider(t, sd, dyn, path)
+	if err := p1.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-1", "", "")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	old, _ := p1.claimFor("ns1/sb-pod")
+
+	p2 := newTestProvider(t, sd, dyn, path)
+	if err := p2.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-1", "sb-pod", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod after the restart: %v", err)
+	}
+	c, ok := p2.claimFor("ns1/sb-pod")
+	if !ok || c.ID != old.ID || c.Authority == nil || *c.Authority != "owner-uid" || sd.claimCount() != 1 || sd.releaseCount() != 0 {
+		t.Fatalf("the same Pod lost its sandbox after a Sandbox adopted it: %+v ok=%v claims=%d releases=%v", c, ok, sd.claimCount(), sd.releases)
+	}
+}
+
+func TestALegacyClaimWithoutAnAuthorityIsStillAdopted(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	legacy := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"uid-1","claimedAt":"2026-01-01T00:00:00Z"}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_prev"}}}
+	p, err := New(t.Context(), Config{Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "uid-2", "sb-owner", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	c, ok := p.claimFor("ns/p")
+	if !ok || c.ID != "sb_prev" || c.Authority == nil || *c.Authority != "owner-uid" || sd.claimCount() != 0 || sd.releaseCount() != 0 {
+		t.Fatalf("a claim from an older table was not adopted as before: %+v ok=%v claims=%d releases=%v", c, ok, sd.claimCount(), sd.releases)
+	}
+}
+
+func TestALegacyPreservedClaimIsNotAdoptedByAnotherOwner(t *testing.T) {
+	path := t.TempDir() + "/claims.json"
+	legacy := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"uid-1","claimedAt":"2026-01-01T00:00:00Z",` +
+		`"owner":{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox","name":"sb-owner","uid":"owner-uid","controller":true}}}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_prev"}}}
+	p, err := New(t.Context(), Config{Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "uid-2", "sb-owner", "owner-uid-2")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	c, ok := p.claimFor("ns/p")
+	if !ok || c.ID == "sb_prev" || sd.claimCount() != 1 {
+		t.Fatalf("a recreated owner adopted a claim preserved by an older build: %+v ok=%v claims=%d", c, ok, sd.claimCount())
+	}
+	p.recheckOwners(t.Context(), time.Now(), time.Minute)
+	if sd.releaseCount() != 1 || sd.releases[0] != "sb_prev" {
 		t.Fatalf("the preserved sandbox was not released: %v", sd.releases)
 	}
 }

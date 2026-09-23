@@ -92,7 +92,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 
 	c := Claim{
 		ID: res.ID, Token: res.Token, Address: res.OwnerAddr,
-		PodUID: string(pod.UID), ClaimedAt: metav1.Now(),
+		PodUID: string(pod.UID), Authority: new(authorityOf(pod)), ClaimedAt: metav1.Now(),
 		Deadline: metav1.NewTime(res.Deadline),
 	}
 	p.mu.Lock()
@@ -136,12 +136,13 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	if !ok || !p.settled(key) {
 		return Claim{}, false
 	}
-	if c.preservedForAnotherOwner(pod) {
+	if !c.adoptableBy(pod) {
 		delete(p.claims, key)
 		p.releasing = append(p.releasing, c)
 		return Claim{}, false
 	}
 	c.PodUID = string(pod.UID)
+	c.Authority = new(authorityOf(pod))
 	c.Owner = nil
 	if c.ClaimedAt.IsZero() {
 		c.ClaimedAt = metav1.Now()
