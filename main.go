@@ -294,13 +294,17 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	}), nil
 }
 
-// podQueueLimits holds the pod queues to the kube client's own budget; the
-// library default caps a node at 10 pod creates or status pushes a second.
 func (o *options) podQueueLimits(c *node.PodControllerConfig) error {
+	qps := cmp.Or(float32(o.kubeQPS), rest.DefaultQPS)
+	burst := cmp.Or(o.kubeBurst, rest.DefaultBurst)
 	limiter := func() workqueue.TypedRateLimiter[any] {
+		backoff := workqueue.NewTypedItemExponentialFailureRateLimiter[any](podRetryBaseDelay, podRetryMaxDelay)
+		if qps < 0 {
+			return backoff
+		}
 		return workqueue.NewTypedMaxOfRateLimiter(
-			workqueue.NewTypedItemExponentialFailureRateLimiter[any](podRetryBaseDelay, podRetryMaxDelay),
-			&workqueue.TypedBucketRateLimiter[any]{Limiter: rate.NewLimiter(rate.Limit(o.kubeQPS), o.kubeBurst)},
+			backoff,
+			&workqueue.TypedBucketRateLimiter[any]{Limiter: rate.NewLimiter(rate.Limit(qps), burst)},
 		)
 	}
 	c.SyncPodsFromKubernetesRateLimiter = limiter()
