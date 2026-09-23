@@ -1481,6 +1481,32 @@ func TestAPodOfANewOwnerGenerationClaimsFresh(t *testing.T) {
 	}
 }
 
+func TestABarePodDoesNotAdoptAPreservedClaim(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	p := newTestProvider(t, sd, dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false)), "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p.claimFor("ns1/sb-pod")
+
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "", "")); err != nil {
+		t.Fatalf("CreatePod for a bare Pod: %v", err)
+	}
+	c, ok := p.claimFor("ns1/sb-pod")
+	if !ok || c.ID == old.ID || sd.claimCount() != 2 {
+		t.Fatalf("a bare Pod adopted a sandbox preserved for a Sandbox owner: %+v ok=%v claims=%d", c, ok, sd.claimCount())
+	}
+	p.recheckOwners(ctx, time.Now(), time.Minute)
+	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the preserved sandbox was not released: %v", sd.releases)
+	}
+}
+
 func TestARestartKeepsThePendingOwnerRecheck(t *testing.T) {
 	ctx := t.Context()
 	path := t.TempDir() + "/claims.json"
