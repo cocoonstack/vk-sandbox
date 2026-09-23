@@ -71,8 +71,8 @@ Pod template carries the matching toleration. See
 virtual-kubelet serves the kubelet API over TLS only, so a certificate always
 exists:
 
-- if `--tls-cert` and `--tls-key` are both set **and** both point at readable
-  regular files, that key pair is loaded;
+- if `--tls-cert` and `--tls-key` are both set **and** both point at regular
+  files, that key pair is loaded, and a pair that fails to load stops startup;
 - otherwise the process self-signs an in-memory P-256 certificate covering
   `--node-name`, `--node-ip`, and `127.0.0.1`.
 

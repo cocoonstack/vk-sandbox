@@ -270,6 +270,6 @@ different routing labels (`cocoonstack.io/pool=<pool>` for vk-cocoon,
 `sandbox.cocoonstack.io/runtime=sandboxd` here). Both carry the
 `virtual-kubelet.io/provider` taint, which one `Exists` toleration in the Pod
 template covers. vk-sandbox can reuse the co-located vk-cocoon kubelet
-certificate when it is readable, and self-signs otherwise, so its API surface
+certificate when its files exist, and self-signs otherwise, so its API surface
 is uniform either way. The delete-authorization and audit-only-GC contracts
 implemented here are carried over from vk-cocoon.
