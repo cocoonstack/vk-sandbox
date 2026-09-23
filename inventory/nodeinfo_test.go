@@ -3,6 +3,7 @@ package inventory
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/api/v1beta1"
@@ -27,7 +28,7 @@ func TestNodeInfoSource(t *testing.T) {
 		{Template: "base:24.04", Net: "none", Size: "small", Warm: 4, Target: 4},
 		{Template: "rt:24.04", Net: "egress", Size: "medium", Warm: 1, Target: 2},
 	}
-	if len(ni.Pools) != 2 || ni.Pools[0] != want[0] || ni.Pools[1] != want[1] {
+	if !slices.Equal(ni.Pools, want) {
 		t.Fatalf("pools wrong: %+v, want %+v", ni.Pools, want)
 	}
 }

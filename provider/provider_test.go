@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -404,41 +406,43 @@ func TestConcurrentSaveStateNeverLosesAClaim(t *testing.T) {
 }
 
 func TestGetPodStatusStartTimeIsStable(t *testing.T) {
-	p, err := New(t.Context(), Config{Logger: logr.Discard()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	pod := &corev1.Pod{Namespace: "ns", Name: "p", UID: "u"}
-	p.pods["ns/p"] = pod
-	p.claims["ns/p"] = Claim{ID: "sb_1", Token: "t", Address: "10.0.0.5:7777", ClaimedAt: metav1.Now()}
+	synctest.Test(t, func(t *testing.T) {
+		p, err := New(t.Context(), Config{Logger: logr.Discard()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.pods["ns/p"] = &corev1.Pod{Namespace: "ns", Name: "p", UID: "u"}
+		p.claims["ns/p"] = Claim{ID: "sb_1", Token: "t", Address: "10.0.0.5:7777", ClaimedAt: metav1.Now()}
 
-	first, _ := p.GetPodStatus(t.Context(), "ns", "p")
-	time.Sleep(20 * time.Millisecond)
-	second, _ := p.GetPodStatus(t.Context(), "ns", "p")
-
-	if !first.StartTime.Equal(second.StartTime) {
-		t.Fatalf("StartTime moves between reads: %v then %v", first.StartTime, second.StartTime)
-	}
+		first, _ := p.GetPodStatus(t.Context(), "ns", "p")
+		time.Sleep(time.Second)
+		second, _ := p.GetPodStatus(t.Context(), "ns", "p")
+		if !first.StartTime.Equal(second.StartTime) {
+			t.Fatalf("StartTime moves between reads: %v then %v", first.StartTime, second.StartTime)
+		}
+	})
 }
 
 func TestStartTimeIsStableForAClaimTableFromAnOlderBuild(t *testing.T) {
-	path := t.TempDir() + "/claims.json"
-	old := `{"claims":{"ns/p":{"id":"sb_1","token":"t","address":"10.0.0.5:7777","podUID":"u"}}}`
-	if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	p, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.pods["ns/p"] = &corev1.Pod{Namespace: "ns", Name: "p", UID: "u"}
+	synctest.Test(t, func(t *testing.T) {
+		path := t.TempDir() + "/claims.json"
+		old := `{"claims":{"ns/p":{"id":"sb_1","token":"t","address":"10.0.0.5:7777","podUID":"u"}}}`
+		if err := os.WriteFile(path, []byte(old), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		p, err := New(t.Context(), Config{StatePath: path, Logger: logr.Discard()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.pods["ns/p"] = &corev1.Pod{Namespace: "ns", Name: "p", UID: "u"}
 
-	first, _ := p.GetPodStatus(t.Context(), "ns", "p")
-	time.Sleep(20 * time.Millisecond)
-	second, _ := p.GetPodStatus(t.Context(), "ns", "p")
-	if !first.StartTime.Equal(second.StartTime) {
-		t.Fatalf("StartTime still moves after loading a pre-ClaimedAt table: %v then %v", first.StartTime, second.StartTime)
-	}
+		first, _ := p.GetPodStatus(t.Context(), "ns", "p")
+		time.Sleep(time.Second)
+		second, _ := p.GetPodStatus(t.Context(), "ns", "p")
+		if !first.StartTime.Equal(second.StartTime) {
+			t.Fatalf("StartTime still moves after loading a pre-ClaimedAt table: %v then %v", first.StartTime, second.StartTime)
+		}
+	})
 }
 
 func TestClaimedAtBackfillIsPersisted(t *testing.T) {
@@ -662,11 +666,9 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 	}
 
 	sd.releaseErr = nil
-	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u3", "", "")); err == nil {
-		t.Log("create succeeded after the stranded sandbox was returned")
-	}
-	if len(sd.releases) == 0 {
-		t.Error("the stranded sandbox was never returned")
+	_ = p.CreatePod(t.Context(), sandboxPod("ns", "p", "u3", "", ""))
+	if len(sd.releases) == 0 || sd.releases[0] != stranded.ID {
+		t.Errorf("the stranded sandbox was not the first one returned: releases=%v", sd.releases)
 	}
 }
 
@@ -876,47 +878,44 @@ func TestVerificationClearsTheQuarantineForALiveSandbox(t *testing.T) {
 }
 
 func TestQuarantineLiftsWithoutTheOrphanScan(t *testing.T) {
-	path := t.TempDir() + "/claims.json"
-	live := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
-	if err := os.WriteFile(path, []byte(live), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
-	p, err := New(t.Context(), Config{Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := p.claimFor("ns/p"); ok {
-		t.Fatal("setup: the claim should start quarantined")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		path := t.TempDir() + "/claims.json"
+		live := `{"claims":{"ns/p":{"id":"sb_live","token":"t","podUID":"u","claimedAt":"2026-01-01T00:00:00Z"}}}`
+		if err := os.WriteFile(path, []byte(live), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+		p, err := New(t.Context(), Config{Client: sd, Lister: sd, StatePath: path, Logger: logr.Discard()})
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	done := make(chan struct{})
-	go func() {
-		p.RunClaimVerification(t.Context(), 5*time.Millisecond)
-		close(done)
-	}()
-
-	sd.mu.Lock()
-	sd.listErr = nil
-	sd.live = []sandboxd.SandboxSummary{{ID: "sb_live"}}
-	sd.mu.Unlock()
-
-	deadline := time.After(2 * time.Second)
-	for {
+		done := make(chan struct{})
+		go func() {
+			p.RunClaimVerification(t.Context(), time.Second)
+			close(done)
+		}()
+		time.Sleep(time.Second)
+		synctest.Wait()
 		if _, ok := p.claimFor("ns/p"); ok {
-			break
+			t.Fatal("the quarantine lifted while sandboxd could not be listed")
+		}
+
+		sd.mu.Lock()
+		sd.listErr = nil
+		sd.live = []sandboxd.SandboxSummary{{ID: "sb_live"}}
+		sd.mu.Unlock()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if _, ok := p.claimFor("ns/p"); !ok {
+			t.Fatal("the quarantine never lifted")
 		}
 		select {
-		case <-deadline:
-			t.Fatal("the quarantine never lifted")
-		case <-time.After(5 * time.Millisecond):
+		case <-done:
+		default:
+			t.Error("verification kept running after the table was vouched for")
 		}
-	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Error("verification kept running after the table was vouched for")
-	}
+	})
 }
 
 func TestARestartDoesNotClaimOverAnUnverifiedSandbox(t *testing.T) {
@@ -1115,32 +1114,35 @@ func TestAClaimWithNoKnownDeadlineStaysRunning(t *testing.T) {
 }
 
 func TestLeaseWatchPublishesFailedForAReapedSandbox(t *testing.T) {
-	p, err := New(t.Context(), Config{Logger: logr.Discard()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := make(chan *corev1.Pod, 8)
-	p.NotifyPods(t.Context(), func(pod *corev1.Pod) { got <- pod })
-
-	p.mu.Lock()
-	p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
-	p.claims["ns/p"] = Claim{
-		ID: "sb_reaped", Token: "t",
-		ClaimedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
-		Deadline:  metav1.NewTime(time.Now().Add(-time.Hour)),
-	}
-	p.mu.Unlock()
-
-	go p.RunLeaseWatch(t.Context(), 5*time.Millisecond)
-
-	select {
-	case pod := <-got:
-		if pod.Status.Phase != corev1.PodFailed || pod.Status.Reason != ReasonLeaseExpired {
-			t.Fatalf("published %v/%v, want Failed/%s", pod.Status.Phase, pod.Status.Reason, ReasonLeaseExpired)
+	synctest.Test(t, func(t *testing.T) {
+		p, err := New(t.Context(), Config{Logger: logr.Discard()})
+		if err != nil {
+			t.Fatal(err)
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("lease expiry was never published")
-	}
+		got := make(chan *corev1.Pod, 8)
+		p.NotifyPods(t.Context(), func(pod *corev1.Pod) { got <- pod })
+
+		p.mu.Lock()
+		p.pods["ns/p"] = sandboxPod("ns", "p", "u", "", "")
+		p.claims["ns/p"] = Claim{
+			ID: "sb_reaped", Token: "t",
+			ClaimedAt: metav1.NewTime(time.Now().Add(-2 * time.Hour)),
+			Deadline:  metav1.NewTime(time.Now().Add(-time.Hour)),
+		}
+		p.mu.Unlock()
+
+		go p.RunLeaseWatch(t.Context(), time.Second)
+		time.Sleep(time.Second)
+		synctest.Wait()
+		select {
+		case pod := <-got:
+			if pod.Status.Phase != corev1.PodFailed || pod.Status.Reason != ReasonLeaseExpired {
+				t.Fatalf("published %v/%v, want Failed/%s", pod.Status.Phase, pod.Status.Reason, ReasonLeaseExpired)
+			}
+		default:
+			t.Fatal("lease expiry was never published")
+		}
+	})
 }
 
 func TestAnExpiredClaimIsReplacedNotAdopted(t *testing.T) {
@@ -1641,7 +1643,7 @@ func (f *fakeSandboxd) Sandboxes(_ context.Context) ([]sandboxd.SandboxSummary, 
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
-	return append([]sandboxd.SandboxSummary(nil), f.live...), nil
+	return slices.Clone(f.live), nil
 }
 
 func (f *fakeSandboxd) releaseCount() int {
