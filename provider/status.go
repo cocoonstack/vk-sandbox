@@ -7,8 +7,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// ReasonLeaseExpired marks a pod whose sandbox lease ended and whose microVM
-// the reaper destroys at that deadline.
+// ReasonLeaseExpired marks a pod whose sandbox lease ended and whose microVM the reaper destroys.
 const ReasonLeaseExpired = "SandboxLeaseExpired"
 
 func (p *Provider) GetPod(_ context.Context, namespace, name string) (*corev1.Pod, error) {
@@ -54,9 +53,7 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 	return &st, nil
 }
 
-// expiredStatus reports a pod whose sandbox lease has ended. The reaper destroys
-// the VM at the deadline and nothing in the stack renews a lease, so continuing
-// to report Running would hide a dead workload indefinitely.
+// expiredStatus reports a pod whose lease ended; the reaper destroys the VM at the deadline.
 func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 	st := corev1.PodStatus{
 		Phase:     corev1.PodFailed,
@@ -74,9 +71,7 @@ func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 	return st
 }
 
-// runningStatus renders the canonical Running status for a claimed pod: the
-// sandbox VM address as the pod IP and one synthetic ready container per spec
-// container (the workload runs inside the microVM, not as containers).
+// runningStatus reports the pod Running at the VM address with one synthetic ready container per spec container.
 func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 	ip := claimIP(c.Address)
 	st := corev1.PodStatus{

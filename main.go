@@ -1,10 +1,5 @@
-// vk-sandbox is a virtual-kubelet that serves Kubernetes agent-sandbox
-// semantics (agents.x-k8s.io, driven by sandbox-operator) from sandboxd,
-// the node-local hot-sandbox daemon of github.com/cocoonstack/sandbox. One
-// virtual node fronts one sandboxd: a sandbox Pod scheduled here becomes a
-// sub-millisecond warm claim, pod deletion never destroys a VM without owner
-// authorization, and the node publishes its O(nodes) inventory summary for the
-// operator's aggregated apiserver.
+// vk-sandbox is the virtual-kubelet that serves agent-sandbox Pods from a
+// node-local sandboxd: one virtual node per daemon, one warm claim per Pod.
 package main
 
 import (
@@ -49,8 +44,7 @@ import (
 )
 
 const (
-	// Sized to the per-node pod-create fan-out: every claim targets the one
-	// node-local sandboxd, so idle connections are pooled against a single host.
+	// Every claim targets the one node-local sandboxd, so the pool is sized to the pod-create fan-out.
 	sandboxdRequestTimeout  = 10 * time.Second
 	sandboxdMaxIdleConns    = 64
 	sandboxdIdleConnTimeout = 90 * time.Second
@@ -58,16 +52,14 @@ const (
 	// claimVerifyInterval stops once everything is vouched for.
 	claimVerifyInterval = 15 * time.Second
 
-	// leaseWatchInterval bounds how stale a reaped sandbox's Running status can
-	// stay; leases run for hours, so half a minute of slop is immaterial.
+	// leaseWatchInterval bounds how stale a reaped sandbox's Running status stays.
 	leaseWatchInterval = 30 * time.Second
 
 	// Per-pod retry backoff of the pod queues, workqueue's own defaults.
 	podRetryBaseDelay = 5 * time.Millisecond
 	podRetryMaxDelay  = 1000 * time.Second
 
-	// TaintKey marks the virtual node; the operator's runtime mutator adds the
-	// matching toleration to sandbox pods it routes here.
+	// TaintKey marks the virtual node; the operator adds the matching toleration to the pods it routes here.
 	TaintKey = "virtual-kubelet.io/provider"
 )
 
@@ -145,8 +137,7 @@ func (o *options) run() error {
 	if err != nil {
 		return fmt.Errorf("kubernetes client config: %w", err)
 	}
-	// client-go defaults to QPS=5/Burst=10, which queues ~400s of client-side
-	// throttling when the advertised 2000 pods push status at once (#1).
+	// client-go's default QPS=5 queues ~400s of throttling when 2000 pods push status at once (#1).
 	cfg.QPS = float32(o.kubeQPS)
 	cfg.Burst = o.kubeBurst
 	clientset, err := kubernetes.NewForConfig(cfg)
@@ -162,10 +153,7 @@ func (o *options) run() error {
 	if err != nil {
 		return err
 	}
-	// One pooled client for the claim path. A bare &http.Client{} falls back to
-	// http.DefaultTransport, whose MaxIdleConnsPerHost of 2 forces a fresh
-	// handshake on every concurrent pod create past the second, and has no
-	// timeout, so a wedged sandboxd would hold the create goroutine forever.
+	// http.DefaultTransport pools 2 idle connections per host and has no timeout.
 	hc := &http.Client{
 		Timeout: sandboxdRequestTimeout,
 		Transport: &http.Transport{
@@ -199,11 +187,7 @@ func (o *options) run() error {
 	if o.orphanInterval > 0 {
 		go p.RunOrphanScan(ctx, o.orphanInterval)
 	}
-	// Independent of the audit scan: a startup that could not reach sandboxd
-	// leaves claims unusable until a listing vouches for them.
 	go p.RunClaimVerification(ctx, claimVerifyInterval)
-	// virtual-kubelet never polls an asynchronous provider, so lease expiry
-	// must be pushed or a reaped sandbox stays Running forever.
 	go p.RunLeaseWatch(ctx, leaseWatchInterval)
 	if o.publishInventory {
 		if err := o.startInventoryPublisher(ctx, cfg, clientset.CoreV1().Nodes(), p, sdClient); err != nil {
@@ -230,9 +214,7 @@ func (o *options) sandboxdToken() (string, error) {
 }
 
 func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc {
-	// Advertised capacity is a scheduling budget only — the pod is a placeholder
-	// and sandboxd holds the real microVM. Without it the scheduler sees 0
-	// allocatable and rejects every sandbox pod.
+	// A scheduling budget only: zero allocatable makes the scheduler reject every sandbox pod.
 	capacity := corev1.ResourceList{
 		corev1.ResourceCPU:    resource.MustParse(o.nodeCPU),
 		corev1.ResourceMemory: resource.MustParse(o.nodeMem),
@@ -277,9 +259,7 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 		opts = append(opts, o.warningsOnly(clientset))
 	}
 
-	// virtual-kubelet only serves the kubelet API over TLS. Reuse the node's
-	// kubelet cert when present, else self-sign one so every node's API surface
-	// is uniform regardless of what the co-located vk-cocoon carries.
+	// virtual-kubelet serves the kubelet API over TLS only.
 	var cert tls.Certificate
 	var err error
 	if fileReadable(o.tlsCert) && fileReadable(o.tlsKey) {
@@ -298,7 +278,7 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	}), nil
 }
 
-// warningsOnly hands the pod controller a recorder that drops Normal events; the library's own would emit one per pod create, update and delete.
+// warningsOnly hands the pod controller a recorder that drops its Normal events, one per pod create, update and delete.
 func (o *options) warningsOnly(clientset kubernetes.Interface) nodeutil.NodeOpt {
 	eb := record.NewBroadcaster()
 	eb.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: clientset.CoreV1().Events("")})

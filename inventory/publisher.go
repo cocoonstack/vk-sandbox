@@ -1,10 +1,6 @@
-// Package inventory bridges this node's live sandboxes into the operator's L3
-// aggregation layer: it implements scale.NodeLiveSource over the provider's
-// claims table + the sandboxd operator index, and publishes the one O(nodes)
-// NodeInventory object this node contributes — its live entries plus the node's
-// sandboxd advertise address and per-pool warm capacity. The per-sandbox truth
-// stays on the node; etcd stores only the summary — the metrics.k8s.io pattern
-// from the operator's scaling design.
+// Package inventory publishes this node's one O(nodes) NodeInventory for the
+// operator's aggregation layer: live entries from sandboxd's index plus the
+// node's advertise address and warm capacity. Per-sandbox truth stays on the node.
 package inventory
 
 import (
@@ -35,8 +31,7 @@ type NodeGetter interface {
 
 var _ scale.NodeLiveSource = (*LiveSource)(nil)
 
-// LiveSource implements scale.NodeLiveSource: the node's own live sandbox
-// state, never a cluster-wide LIST.
+// LiveSource implements scale.NodeLiveSource from the node's own state, never a cluster-wide LIST.
 type LiveSource struct {
 	claims ClaimAddresses
 	lister provider.Lister
@@ -65,10 +60,7 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 	return out, nil
 }
 
-// Publisher server-side-applies this node's single NodeInventory object on a slow
-// cadence: its live entries (from a NodeLiveSource) plus the node's sandboxd advertise
-// address and per-pool warm capacity (from a NodeInfoSource). This is the entire L3
-// write path for this node — one O(nodes) apply, no per-sandbox etcd object.
+// Publisher server-side-applies this node's single NodeInventory: live entries plus address and warm capacity.
 type Publisher struct {
 	node    string
 	live    scale.NodeLiveSource
@@ -80,8 +72,7 @@ type Publisher struct {
 	nodeSeen bool
 }
 
-// NewPublisher builds a Publisher for node. info may be nil, in which case the
-// applied NodeInventory carries entries only (no address/pools).
+// NewPublisher builds a Publisher for node; a nil info publishes entries only.
 func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, nodes NodeGetter, applier scale.InventoryApplier, log logr.Logger) *Publisher {
 	return &Publisher{node: node, live: live, info: info, nodes: nodes, applier: applier, log: log}
 }
@@ -118,8 +109,7 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 	return len(entries), nil
 }
 
-// PublishPeriodically runs Publish on interval until ctx is canceled. Publish
-// failures are logged, not fatal — the next tick rebuilds from live state.
+// PublishPeriodically runs Publish on interval until ctx is canceled; failures are logged and retried next tick.
 func (p *Publisher) PublishPeriodically(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

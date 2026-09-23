@@ -14,9 +14,7 @@ import (
 	"time"
 )
 
-// selfSignedCert keeps the kubelet API surface uniform when no reusable cert
-// exists: the apiserver dials kubelet-served routes with InsecureSkipTLSVerify,
-// so self-signed suffices — and for sandboxes those routes are stubbed anyway.
+// selfSignedCert suffices because the apiserver dials kubelet routes with InsecureSkipTLSVerify.
 func selfSignedCert(hosts ...string) (tls.Certificate, error) {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

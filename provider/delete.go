@@ -42,9 +42,7 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 
-// forgetPod drops the pod entry only. The claim (if any) is deliberately kept:
-// dropping it would orphan the release credential and turn a preserved sandbox
-// into an unreleasable one.
+// forgetPod drops the pod entry and keeps the claim, so its release credential is never orphaned.
 func (p *Provider) forgetPod(key string) {
 	p.mu.Lock()
 	delete(p.pods, key)

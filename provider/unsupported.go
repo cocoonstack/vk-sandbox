@@ -10,9 +10,7 @@ import (
 	statsv1alpha1 "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 )
 
-// ErrNotImplemented marks kubelet surfaces this provider does not serve yet.
-// Interactive access to a sandbox goes through the sandbox SDK / preview URLs
-// (see the cocoonstack/sandbox docs), not the kubelet exec path.
+// ErrNotImplemented marks kubelet surfaces this provider does not serve; interactive access goes through the sandbox SDK.
 var ErrNotImplemented = errors.New("vk-sandbox: not implemented; use the sandbox SDK for interactive access")
 
 func (p *Provider) GetContainerLogs(context.Context, string, string, string, api.ContainerLogOpts) (io.ReadCloser, error) {

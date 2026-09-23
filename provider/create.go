@@ -16,12 +16,9 @@ import (
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 )
 
-// Pod-contract annotation keys. Template/net/size reuse the operator's
-// pkg/scale selector keys verbatim so one contract spans the L2 gateway and
-// this provider; the rest are provider-local.
+// Annotation keys; template, net and size are the operator's selector keys verbatim.
 const (
-	// AnnRuntime routes a pod to this provider. sandbox-operator's
-	// runtime mutator sets it on sandbox pods destined for sandboxd nodes.
+	// AnnRuntime routes a pod to this provider; the operator's runtime mutator sets it.
 	AnnRuntime = "sandbox.cocoonstack.io/runtime"
 	// RuntimeSandboxd is the AnnRuntime value this provider serves.
 	RuntimeSandboxd = "sandboxd"
@@ -33,13 +30,10 @@ const (
 	// AnnTTLSeconds bounds the claim lease (0 = sandboxd default).
 	AnnTTLSeconds = "sandbox.cocoonstack.io/ttl-seconds"
 
-	// AnnClaimID is written back by the provider: the sandboxd claim id backing
-	// this pod. Identity only — the release token never leaves the node.
+	// AnnClaimID is written back with the sandboxd claim id; the release token never leaves the node.
 	AnnClaimID = "sandbox.cocoonstack.io/claim-id"
 
-	// defaultClaimTTLSeconds is requested when a pod carries no TTL annotation:
-	// sandboxd's maxTTL. Sending 0 would use sandboxd's five-minute default for
-	// ephemeral SDK claims, too short for a Pod workload.
+	// defaultClaimTTLSeconds is sandboxd's maxTTL; 0 would select the five-minute SDK default.
 	defaultClaimTTLSeconds = 24 * 60 * 60
 )
 
@@ -50,9 +44,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return fmt.Errorf("pod %s requests runtime %q; this node serves %q", key, rt, RuntimeSandboxd)
 	}
 
-	// An unverified row from a previous process may still be a live sandbox whose
-	// only credential is that row. Settle it before deciding anything, so a
-	// vouched-for sandbox is adopted on this pass rather than the next retry.
+	// An unverified row may be a live sandbox whose only credential is that row.
 	if err := p.resolveUnverifiedClaim(ctx, key); err != nil {
 		return err
 	}
@@ -60,10 +52,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return err
 	}
 
-	// Adopt-in-place: an existing claim for this key survives pod churn. Its
-	// release credential is already durable — it was persisted when the sandbox
-	// was first claimed — so this save only refreshes which Pod holds it, and a
-	// failure costs nothing recoverable. That is why it stays log-only.
+	// The adopted credential is already durable, so this save is log-only.
 	if c, ok := p.adoptExistingClaim(key, pod); ok {
 		p.saveState()
 		p.log.Info("adopted preserved sandbox for replacement pod", "pod", key, "claim", c.ID)
@@ -71,9 +60,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return nil
 	}
 
-	// A stranded claim from an earlier failed create still holds a live microVM
-	// and its credential exists nowhere else. Claiming over it would destroy the
-	// only handle to that sandbox, so it is returned first.
+	// A stranded claim holds a live microVM whose credential exists only here.
 	if err := p.clearStrandedClaim(ctx, key); err != nil {
 		return err
 	}
@@ -91,8 +78,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		Net:        ann(pod, AnnNet, ""),
 		Size:       ann(pod, AnnSize, ""),
 		TTLSeconds: ttl,
-		// The node echoes this back in its operator index, which is what lets a
-		// claim whose response never arrived be traced to the Pod it was for.
+		// Echoed in the node's index, which traces a claim whose response was lost to its Pod.
 		ClaimRef: key,
 	}
 	if spec.Template == "" {
@@ -112,14 +98,11 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 	p.mu.Lock()
 	p.claims[key] = c
 	p.pods[key] = podWithClaim(pod, c.ID)
-	// Tentative until its own write lands: a concurrent create's snapshot must
-	// not make this claim durable, or the rollback below could not take it back.
+	// Invisible to a concurrent create's snapshot until its own write lands.
 	p.tentative[key] = struct{}{}
 	p.mu.Unlock()
 
-	// Nothing has told Kubernetes this Pod is running yet, so a claim whose
-	// release credential could not be stored is still undoable — and must be
-	// undone, or the microVM leaks with no way to reach it after a restart.
+	// Kubernetes has not been told Running, so an unpersisted claim is still undoable.
 	if err := p.commitClaim(key); err != nil {
 		return p.undoUnpersistedClaim(ctx, key, c, err)
 	}
@@ -145,9 +128,7 @@ func (p *Provider) UpdatePod(ctx context.Context, pod *corev1.Pod) error {
 	return nil
 }
 
-// adoptExistingClaim binds pod to the claim already held for its key. The read
-// and the write are one locked step: verification can drop a row between them,
-// and writing an outside copy back would resurrect a sandbox that is gone.
+// adoptExistingClaim rebinds pod to its key's claim in one locked step, so a row verification dropped is not written back.
 func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -164,12 +145,8 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	return c, true
 }
 
-// settleExpiredClaim decides what a past-deadline row means before its key is
-// reused. The cached deadline is not authoritative — the archive lifecycle
-// rewrites a claim's lease on the node — so a still-listed claim has its
-// deadline refreshed and stays adoptable, only a claim the node no longer
-// holds is dropped for replacement, and an unlistable node fails the create
-// rather than overwriting what may be a live sandbox's only credential.
+// settleExpiredClaim refreshes a past-deadline row the node still lists, drops one
+// it no longer holds, and fails the create when the node cannot be listed.
 func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	c, held := p.claimFor(key)
 	if !held || !c.expired(time.Now()) {
@@ -191,9 +168,7 @@ func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	return nil
 }
 
-// resolveUnverifiedClaim settles a quarantined row before its pod key is reused.
-// Claiming over it would strand a live sandbox whose only credential is that
-// row, so an unresolvable one fails the create and leaves the Pod pending.
+// resolveUnverifiedClaim fails the create rather than claim over a quarantined row it cannot settle.
 func (p *Provider) resolveUnverifiedClaim(ctx context.Context, key string) error {
 	p.mu.RLock()
 	_, unverified := p.quarantined[key]
@@ -207,9 +182,7 @@ func (p *Provider) resolveUnverifiedClaim(ctx context.Context, key string) error
 	return fmt.Errorf("pod %s: a claim from a previous run is unverified and sandboxd cannot be listed; refusing to claim over a possibly live sandbox", key)
 }
 
-// clearStrandedClaim returns a sandbox left behind by an earlier create whose
-// claim never reached disk and whose compensating release failed. Until it is
-// gone this key cannot be reused: its credential lives only in memory.
+// clearStrandedClaim returns a sandbox whose claim never reached disk and whose undo release failed.
 func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 	p.mu.RLock()
 	c, held := p.claims[key]
@@ -227,9 +200,7 @@ func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 	return nil
 }
 
-// undoUnpersistedClaim hands a just-claimed sandbox back after its release
-// credential could not be stored. A release that also fails keeps the
-// in-memory claim so an update retry or deletion can still reach the sandbox.
+// undoUnpersistedClaim returns a just-claimed sandbox; if that fails too, the credential stays in memory.
 func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim, persistErr error) error {
 	if err := p.releaseDetached(ctx, c); err != nil {
 		p.log.Error(err, "could not return a sandbox whose claim failed to persist; keeping the credential in memory",
@@ -250,15 +221,13 @@ func (p *Provider) pushRunning(pod *corev1.Pod, c Claim) {
 	p.notify(out)
 }
 
-// releaseDetached runs on its own deadline: a compensating release must not
-// depend on a caller context that may already be canceled.
+// releaseDetached runs on its own deadline; the caller's context may already be canceled.
 func (p *Provider) releaseDetached(ctx context.Context, c Claim) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), undoReleaseTimeout)
 	defer cancel()
 	return p.client.Release(ctx, c.ID, c.Token)
 }
 
-// withdrawClaim removes the claim and pod entries together.
 func (p *Provider) withdrawClaim(key, id string) {
 	p.mu.Lock()
 	if cur, ok := p.claims[key]; ok && cur.ID == id {

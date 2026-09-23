@@ -1,15 +1,6 @@
-// Package provider implements the virtual-kubelet provider that bridges
-// Kubernetes agent-sandbox semantics (agents.x-k8s.io, driven by
-// sandbox-operator) onto sandboxd — the node-local hot-sandbox daemon
-// from github.com/cocoonstack/sandbox that hands over an already-running
-// microVM in 0.2–0.7 ms.
-//
-// The division of labor in the million-scale design (the operator README's
-// "Scaling design" chapter): the operator owns the record plane (CRDs, warm
-// pools, claims, admission), this provider owns the node transaction plane —
-// a sandbox Pod scheduled to the virtual node becomes one sandboxd claim, and
-// the delete-authorization contract guarantees a Pod deletion alone never
-// destroys the backing VM.
+// Package provider implements the virtual-kubelet PodLifecycleHandler over
+// sandboxd: a Pod scheduled to the virtual node becomes one warm claim, and a
+// Pod deletion alone never destroys the backing VM.
 package provider
 
 import (
@@ -29,43 +20,29 @@ import (
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// undoReleaseTimeout bounds the compensating release when a fresh claim cannot
-// be persisted; the caller's context may already be canceled by then.
+// undoReleaseTimeout bounds a compensating release whose caller context may already be canceled.
 const undoReleaseTimeout = 10 * time.Second
 
-// SandboxdClient is the subset of the sandboxd API this provider drives;
-// *sandboxd.Client (from sandbox-operator) satisfies it and Lister.
+// SandboxdClient is the sandboxd surface the claim path drives; *sandboxd.Client satisfies it and Lister.
 type SandboxdClient interface {
 	Claim(ctx context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error)
 	Release(ctx context.Context, id, token string) error
 }
 
-// Lister enumerates the node's live sandboxes (sandboxd GET /v1/sandboxes,
-// root token). Separate from SandboxdClient so tests can fail listing
-// independently of claiming.
+// Lister enumerates the node's live sandboxes, apart from SandboxdClient so tests can fail either alone.
 type Lister interface {
 	Sandboxes(ctx context.Context) ([]sandboxd.SandboxSummary, error)
 }
 
-// Claim is the durable record binding one pod key to one sandboxd claim. The
-// token is the release credential: holding it is what makes this provider —
-// never background reconciliation — the only party able to destroy the VM.
+// Claim binds one pod key to one sandboxd claim; Token is the release credential and never leaves the node.
 type Claim struct {
 	ID      string `json:"id"`
 	Token   string `json:"token"`
 	Address string `json:"address,omitempty"`
-	// PodUID is written for operator forensics — which Pod generation last held
-	// this sandbox. The stale-request guard reads the in-memory pod table, not
-	// this field, so a restart does not depend on it.
-	PodUID string `json:"podUID"`
-	// ClaimedAt is when this claim was taken. Status reads report it as the Pod
-	// start time, which must not move between reads; a table written by an older
-	// build has none, so the first read after upgrade settles it.
+	PodUID  string `json:"podUID"` // forensics only; the stale-UID guard reads the pod table
+	// ClaimedAt is reported as the Pod start time, so it must not move between reads.
 	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
-	// Deadline is the lease end sandboxd returned for this claim. There is no
-	// renewal anywhere in the stack — the e2b keepalive is record-keeping only —
-	// so past it the reaper destroys the VM and status must stop saying Running.
-	// Zero means unknown (an older table), which reads as no known expiry.
+	// Deadline is the lease end sandboxd returned; zero means unknown (an older table).
 	Deadline metav1.Time `json:"deadline,omitzero"`
 }
 
@@ -77,11 +54,9 @@ func (c Claim) expired(now time.Time) bool {
 type Config struct {
 	Client SandboxdClient
 	Lister Lister
-	// Dynamic reads owner CRs for the destroy-authorization quorum. nil means
-	// owner state is unverifiable and every guarded delete preserves.
+	// Dynamic reads owner CRs for delete authorization; nil makes every guarded delete preserve.
 	Dynamic dynamic.Interface
-	// StatePath persists the claims table (0600) so a provider restart keeps
-	// the release credentials. Empty disables persistence (tests).
+	// StatePath persists the claims table at 0600; empty disables persistence (tests).
 	StatePath string
 	Logger    logr.Logger
 }
@@ -105,25 +80,16 @@ type Provider struct {
 	claims   map[string]Claim
 	notifier podNotifier
 
-	// tentative holds pod keys whose claim has not been durably written yet. Such
-	// a claim is invisible to persist — otherwise a concurrent create's snapshot
-	// would make it durable, and a later rollback could not take it back — and it
-	// never reports Running, because its release credential may not survive.
+	// tentative holds keys whose claim is not on disk yet: invisible to persist, never Running.
 	tentative map[string]struct{}
 
-	// quarantined holds keys loaded from disk that no sandboxd listing has
-	// confirmed yet. A row left behind by a release whose save failed looks
-	// identical to a live one, so it may not be adopted or reported Running
-	// until the node vouches for it.
+	// quarantined holds loaded keys no listing has vouched for: releasable, not adoptable or Running.
 	quarantined map[string]struct{}
 
-	// orphanVerdicts is the previous scan's verdict per sandbox id, used to log
-	// each verdict transition once. Touched only by the scan goroutine.
+	// orphanVerdicts is the previous scan's verdict per sandbox id; the scan goroutine owns it.
 	orphanVerdicts map[string]string
 
-	// saveMu orders snapshot-to-rename as one step. Without it concurrent pod
-	// creates can rename an older snapshot last, dropping a release credential
-	// and leaking its microVM until sandboxd's TTL reaps it.
+	// saveMu orders snapshot-to-rename, or a concurrent create renames an older snapshot last.
 	saveMu sync.Mutex
 }
 
@@ -143,15 +109,12 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 	if err := p.loadState(); err != nil {
 		return nil, err
 	}
-	// Nothing has vouched for a table read off disk, so it starts quarantined and
-	// a listing settles it; the state-file tests construct a provider with no lister.
+	// A loaded table starts quarantined; the state-file tests build a provider with no lister.
 	if p.lister != nil {
 		p.quarantineLoadedClaims()
 		p.VerifyClaimsAgainstNode(ctx)
 	}
-	// Prove the claims table is writable before accepting any Pod. Running with an
-	// unwritable state path would persist no release credential, so every claim
-	// this process made would leak its microVM on restart.
+	// An unwritable state path would leak every microVM this process claims on restart.
 	if err := p.persist(); err != nil {
 		return nil, fmt.Errorf("claims state is not writable: %w", err)
 	}
@@ -176,22 +139,14 @@ func (p *Provider) ClaimAddresses() map[string]string {
 	return out
 }
 
-// VerifyClaimsAgainstNode settles the rows no listing has vouched for yet:
-// those the node still holds leave quarantine, those it does not are dropped.
-// It deliberately judges nothing else — a row this process created is already
-// known good, and judging it against a listing taken moments earlier is how a
-// live sandbox loses its record.
-//
-// A failed listing is NOT an empty list — the 2026-05-15 rule — so nothing is
-// dropped when sandboxd cannot be read. Unverified rows stay quarantined
-// instead: still releasable, but invisible to adoption and to Running until a
-// listing confirms them. Reports whether the listing succeeded.
+// VerifyClaimsAgainstNode settles the quarantined rows against a listing: rows
+// the node holds leave quarantine, rows it does not are dropped. A failed
+// listing is not an empty list, so it drops nothing and reports false.
 func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 	if p.lister == nil {
 		return false
 	}
-	// Snapshot first: a claim made while the listing is in flight is not in it,
-	// and judging that claim by this list would drop a row for a live sandbox.
+	// A claim made while the listing is in flight is not in it, so only the snapshot is judged.
 	p.mu.RLock()
 	before := make(map[string]string, len(p.quarantined))
 	for k := range p.quarantined {
@@ -201,7 +156,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 	}
 	p.mu.RUnlock()
 	if len(before) == 0 {
-		return true // nothing unverified: the listing has nothing to judge
+		return true
 	}
 
 	listed, err := p.lister.Sandboxes(ctx)
@@ -219,8 +174,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 			continue // replaced since the snapshot; this listing cannot judge it
 		}
 		if rowDeadline, ok := live[id]; ok {
-			// A row from a build that predates Deadline would otherwise read as
-			// never-expiring; the node's listing carries the lease end.
+			// An older table has no Deadline; the listing carries the lease end.
 			if c.Deadline.IsZero() && !rowDeadline.IsZero() {
 				c.Deadline = metav1.NewTime(rowDeadline)
 				p.claims[key] = c
@@ -254,9 +208,7 @@ func (p *Provider) settled(key string) bool {
 	return !pending && !unverified
 }
 
-// claimFor returns the durable claim bound to key. A claim whose credential is
-// not on disk yet is withheld: it can still be rolled back, so nothing may
-// report it Running or adopt it.
+// claimFor returns the settled claim for key; a tentative or quarantined one is withheld.
 func (p *Provider) claimFor(key string) (Claim, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -267,9 +219,7 @@ func (p *Provider) claimFor(key string) (Claim, bool) {
 	return c, ok
 }
 
-// heldClaimFor returns the claim bound to key whether or not it is durable yet.
-// Release paths use this: a tentative claim still holds a live microVM, and
-// withholding it from delete would strand that VM until sandboxd's TTL.
+// heldClaimFor returns the claim for key even before it is durable, for release paths.
 func (p *Provider) heldClaimFor(key string) (Claim, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -277,9 +227,7 @@ func (p *Provider) heldClaimFor(key string) (Claim, bool) {
 	return c, ok
 }
 
-// podUIDIsCurrent guards lifecycle actions against stale objects: a same-name
-// pod with a different UID in the table means the request refers to a previous
-// generation.
+// podUIDIsCurrent rejects a request carrying a previous pod generation's UID.
 func (p *Provider) podUIDIsCurrent(key string, pod *corev1.Pod) bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -290,9 +238,7 @@ func (p *Provider) podUIDIsCurrent(key string, pod *corev1.Pod) bool {
 	return cur.UID == pod.UID
 }
 
-// loadState restores the claims table after a provider restart so the release
-// credentials survive (mirrors the vk-cocoon fallback-identity contract: a
-// restart must not orphan authority over live VMs).
+// loadState restores the claims table so the release credentials survive a restart.
 func (p *Provider) loadState() error {
 	if p.statePath == "" {
 		return nil
@@ -311,9 +257,7 @@ func (p *Provider) loadState() error {
 	if st.Claims == nil {
 		return nil
 	}
-	// A table written before ClaimedAt existed would otherwise report a Pod start
-	// time that moves on every status read. New persists right after this, which
-	// is what settles it for good.
+	// A table from before ClaimedAt would report a moving Pod start time; New persists the backfill.
 	now := metav1.Now()
 	for k, c := range st.Claims {
 		if c.ClaimedAt.IsZero() {
@@ -334,8 +278,7 @@ func (p *Provider) dropClaim(key, id string) {
 	}
 }
 
-// refreshDeadline adopts the node's view of a claim's lease. ID-guarded: the
-// row may have been replaced since the caller looked.
+// refreshDeadline adopts the node's lease for the row unless it was replaced since.
 func (p *Provider) refreshDeadline(key, id string, deadline time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -351,8 +294,6 @@ func (p *Provider) hasQuarantined() bool {
 	return len(p.quarantined) > 0
 }
 
-// quarantineLoadedClaims marks every loaded row unverified, for the case where
-// startup could not reach sandboxd. The next successful listing clears them.
 func (p *Provider) quarantineLoadedClaims() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -361,16 +302,14 @@ func (p *Provider) quarantineLoadedClaims() {
 	}
 }
 
-// saveState persists the claims table, logging rather than returning a failure:
-// its callers (adoption, release) have already changed what the node holds.
+// saveState logs a failed persist: its callers have already changed what the node holds.
 func (p *Provider) saveState() {
 	if err := p.persist(); err != nil {
 		p.log.Error(err, "persist claims state")
 	}
 }
 
-// commitClaim makes a tentative claim durable. The marker is cleared only after
-// the rename lands, so the claim never looks durable during the write itself.
+// commitClaim makes a tentative claim durable; the marker clears only after the rename lands.
 func (p *Provider) commitClaim(key string) error {
 	p.saveMu.Lock()
 	defer p.saveMu.Unlock()
@@ -391,8 +330,7 @@ func (p *Provider) persist() error {
 	return p.write("")
 }
 
-// write serializes the durable claims — plus committing, the key being made
-// durable by this call — and replaces the state file. Callers hold saveMu.
+// write replaces the state file with the durable claims plus committing. Callers hold saveMu.
 func (p *Provider) write(committing string) error {
 	if p.statePath == "" {
 		return nil
@@ -409,8 +347,7 @@ func (p *Provider) write(committing string) error {
 	if err != nil {
 		return fmt.Errorf("encode claims state: %w", err)
 	}
-	// Cheap next to the write (2us of a 300us save) and it keeps a deleted
-	// state directory from turning every later save into a permanent failure.
+	// A deleted state directory must not turn every later save into a permanent failure.
 	if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
 		return fmt.Errorf("mkdir state dir: %w", err)
 	}

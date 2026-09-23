@@ -7,15 +7,12 @@ import (
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// InfoClient reads this node's warm-pool state from sandboxd GET /v1/info.
-// *sandboxd.Client satisfies it.
+// InfoClient reads this node's warm-pool state from sandboxd; *sandboxd.Client satisfies it.
 type InfoClient interface {
 	Info(ctx context.Context) (*sandboxd.NodeInfo, error)
 }
 
-// NodeInfo is the node-level summary the publisher stamps onto NodeInventory
-// alongside its live entries: the sandboxd advertise address (claim routing) and
-// per-pool warm capacity (node-picking).
+// NodeInfo is the node summary stamped onto NodeInventory: the sandboxd advertise address and per-pool warm capacity.
 type NodeInfo struct {
 	Address string
 	Pools   []extv1beta1.PoolCapacity
@@ -31,9 +28,7 @@ type sandboxdInfoSource struct {
 	info    InfoClient
 }
 
-// NewNodeInfoSource builds a NodeInfoSource that pairs the node's sandboxd
-// advertise address (host:port, the claim-routing target the aggregated apiserver
-// dials) with live warm-pool capacity read from info.
+// NewNodeInfoSource pairs the sandboxd advertise address with live warm-pool capacity from info.
 func NewNodeInfoSource(address string, info InfoClient) NodeInfoSource {
 	return &sandboxdInfoSource{address: address, info: info}
 }
