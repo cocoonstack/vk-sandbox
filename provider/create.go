@@ -160,9 +160,11 @@ func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	if err != nil {
 		return fmt.Errorf("pod %s: claim %s is past its cached deadline and sandboxd cannot be listed; refusing to replace it: %w", key, c.ID, err)
 	}
-	if deadline, ok := liveDeadlines(listed)[c.ID]; ok {
-		p.refreshDeadline(key, c.ID, deadline)
-		return nil
+	for _, row := range listed {
+		if row.ID == c.ID {
+			p.refreshDeadline(key, c.ID, row.Deadline)
+			return nil
+		}
 	}
 	p.dropClaim(key, c.ID)
 	return nil
