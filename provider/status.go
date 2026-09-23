@@ -46,7 +46,7 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 		st.Phase = corev1.PodPending
 		return st, nil
 	}
-	if !c.Deadline.IsZero() && time.Now().After(c.Deadline.Time) {
+	if c.expired(time.Now()) {
 		st := expiredStatus(pod, c)
 		return &st, nil
 	}

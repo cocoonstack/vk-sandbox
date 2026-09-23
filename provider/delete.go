@@ -2,12 +2,9 @@ package provider
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
-
-	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
 func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
@@ -33,15 +30,7 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 
 	p.log.Info("release authorized", "pod", key, "claim", c.ID, "reason", reason)
 	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
-		var he *sandboxd.HTTPError
-		if errors.As(err, &he) && he.StatusCode == 404 {
-			// Already gone (sandboxd treats released-again as 404): converge.
-			p.log.Info("sandbox already gone at release", "pod", key, "claim", c.ID)
-		} else {
-			// Keep claim + pod so the kubelet retries the delete with the
-			// release credential intact.
-			return fmt.Errorf("release sandbox %s for %s: %w", c.ID, key, err)
-		}
+		return fmt.Errorf("release sandbox %s for %s: %w", c.ID, key, err)
 	}
 	p.mu.Lock()
 	delete(p.claims, key)

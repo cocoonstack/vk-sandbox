@@ -34,10 +34,7 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 		return nil, nil, false
 	}
 
-	live := make(map[string]struct{}, len(listed))
-	for _, s := range listed {
-		live[s.ID] = struct{}{}
-	}
+	live := liveDeadlines(listed)
 
 	p.mu.RLock()
 	claimed := make(map[string]string, len(p.claims)) // claim id -> pod key
@@ -124,10 +121,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	var candidates []candidate
 	p.mu.RLock()
 	for key, c := range p.claims {
-		if c.Deadline.IsZero() || now.Before(c.Deadline.Time) {
-			continue
-		}
-		if !p.settled(key) || p.pods[key] == nil {
+		if !c.expired(now) || !p.settled(key) || p.pods[key] == nil {
 			continue
 		}
 		candidates = append(candidates, candidate{key: key, claim: c})

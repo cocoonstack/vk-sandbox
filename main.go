@@ -240,10 +240,6 @@ func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc
 	}
 	kubeletPort, _ := listenPort(o.listenAddr)
 	return func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
-		if cfg.Node.Labels == nil {
-			cfg.Node.Labels = map[string]string{}
-		}
-		cfg.Node.Labels["type"] = "virtual-kubelet"
 		maps.Copy(cfg.Node.Labels, parseLabels(o.podLabels))
 		cfg.Node.Spec.Taints = append(cfg.Node.Spec.Taints, corev1.Taint{
 			Key:    TaintKey,
@@ -286,7 +282,7 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	// is uniform regardless of what the co-located vk-cocoon carries.
 	var cert tls.Certificate
 	var err error
-	if o.tlsCert != "" && o.tlsKey != "" && fileReadable(o.tlsCert) && fileReadable(o.tlsKey) {
+	if fileReadable(o.tlsCert) && fileReadable(o.tlsKey) {
 		if cert, err = tls.LoadX509KeyPair(o.tlsCert, o.tlsKey); err != nil {
 			return nil, fmt.Errorf("load kubelet TLS cert: %w", err)
 		}
@@ -337,13 +333,9 @@ func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config,
 	if err != nil {
 		return fmt.Errorf("controller-runtime client for inventory publish: %w", err)
 	}
-	advertiseAddr := o.sandboxdAddr
-	if advertiseAddr == "" {
-		advertiseAddr = hostPort(o.sandboxdURL)
-	}
 	pub := inventory.NewPublisher(o.nodeName,
 		inventory.NewLiveSource(p, sd),
-		inventory.NewNodeInfoSource(advertiseAddr, sd),
+		inventory.NewNodeInfoSource(cmp.Or(o.sandboxdAddr, hostPort(o.sandboxdURL)), sd),
 		nodes,
 		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"),
 		o.log.WithName("inventory"))

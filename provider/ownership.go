@@ -27,17 +27,6 @@ const (
 // authVerdict is the destroy-authorization decision for one pod deletion.
 type authVerdict int
 
-// controllerOwnerRef returns the pod's controller owner reference, or nil for bare pods.
-func controllerOwnerRef(pod *corev1.Pod) *metav1.OwnerReference {
-	for i := range pod.OwnerReferences {
-		ref := &pod.OwnerReferences[i]
-		if ref.Controller != nil && *ref.Controller {
-			return ref
-		}
-	}
-	return nil
-}
-
 // ownerGVR maps an ownerReference (apiVersion, kind) to the GVR used for the
 // destroy-authorization quorum read. Unknown shapes return ok=false and the
 // caller preserves.
@@ -88,7 +77,7 @@ func pluralResource(lower string) string {
 //   - A bare pod (no controller ownerReference) is its own authority: the pod
 //     IS the teardown intent, so its deletion releases.
 func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.Pod) (authVerdict, string) {
-	ref := controllerOwnerRef(pod)
+	ref := metav1.GetControllerOf(pod)
 	if ref == nil {
 		return authRelease, "bare pod: pod deletion is the owner teardown"
 	}
@@ -115,7 +104,7 @@ func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.P
 	if ownerExpired(obj) {
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " expired: the operator tore its workload down"
 	}
-	if string(obj.GetUID()) != string(ref.UID) && ref.UID != "" {
+	if ref.UID != "" && obj.GetUID() != ref.UID {
 		// Same-name owner with a different UID: the referenced owner generation
 		// is gone and something new took its name. The referenced owner no
 		// longer exists, so its teardown is complete.

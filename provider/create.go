@@ -172,7 +172,7 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 // rather than overwriting what may be a live sandbox's only credential.
 func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	c, held := p.claimFor(key)
-	if !held || c.Deadline.IsZero() || time.Now().Before(c.Deadline.Time) {
+	if !held || !c.expired(time.Now()) {
 		return nil
 	}
 	if p.lister == nil {
@@ -183,11 +183,9 @@ func (p *Provider) settleExpiredClaim(ctx context.Context, key string) error {
 	if err != nil {
 		return fmt.Errorf("pod %s: claim %s is past its cached deadline and sandboxd cannot be listed; refusing to replace it: %w", key, c.ID, err)
 	}
-	for _, row := range listed {
-		if row.ID == c.ID {
-			p.refreshDeadline(key, c.ID, row.Deadline)
-			return nil
-		}
+	if deadline, ok := liveDeadlines(listed)[c.ID]; ok {
+		p.refreshDeadline(key, c.ID, deadline)
+		return nil
 	}
 	p.dropClaim(key, c.ID)
 	return nil
@@ -222,10 +220,7 @@ func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 	}
 
 	if err := p.releaseDetached(ctx, c); err != nil {
-		var he *sandboxd.HTTPError
-		if !errors.As(err, &he) || he.StatusCode != 404 {
-			return fmt.Errorf("pod %s: a previous sandbox %s could not be returned and its credential is only in memory: %w", key, c.ID, err)
-		}
+		return fmt.Errorf("pod %s: a previous sandbox %s could not be returned and its credential is only in memory: %w", key, c.ID, err)
 	}
 	p.withdrawClaim(key, c.ID)
 	p.log.Info("returned a stranded sandbox before reusing its pod key", "pod", key, "claim", c.ID)
@@ -287,9 +282,6 @@ func ann(pod *corev1.Pod, key, def string) string { return cmp.Or(pod.Annotation
 
 // claimIP extracts the host of a sandboxd owner_addr ("10.0.0.5:7777").
 func claimIP(addr string) string {
-	if addr == "" {
-		return ""
-	}
 	if host, _, err := net.SplitHostPort(addr); err == nil && host != "" {
 		return host
 	}

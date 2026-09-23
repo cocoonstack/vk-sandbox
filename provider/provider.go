@@ -69,6 +69,10 @@ type Claim struct {
 	Deadline metav1.Time `json:"deadline,omitzero"`
 }
 
+func (c Claim) expired(now time.Time) bool {
+	return !c.Deadline.IsZero() && !now.Before(c.Deadline.Time)
+}
+
 // Config assembles a Provider.
 type Config struct {
 	Client SandboxdClient
@@ -238,7 +242,7 @@ func (p *Provider) notify(pod *corev1.Pod) {
 	p.mu.RLock()
 	n := p.notifier
 	p.mu.RUnlock()
-	if n != nil && pod != nil {
+	if n != nil {
 		n(pod)
 	}
 }

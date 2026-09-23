@@ -91,7 +91,7 @@ func BenchmarkClientThrottle(b *testing.B) {
 func podQueues(t *testing.T, qps float64, burst int) map[string]workqueue.TypedRateLimiter[any] {
 	t.Helper()
 	o := &options{nodeName: "vk-test", listenAddr: "127.0.0.1:10260", kubeQPS: qps, kubeBurst: burst}
-	opts, err := o.nodeOptions(fake.NewSimpleClientset())
+	opts, err := o.nodeOptions(fake.NewClientset())
 	if err != nil {
 		t.Fatalf("nodeOptions: %v", err)
 	}
