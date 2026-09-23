@@ -278,6 +278,22 @@ func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 	}
 }
 
+func TestOrphanScanSkipsSandboxesQueuedForRelease(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_leaving", ClaimRef: "ns1/gone"}}}
+	p := newTestProvider(t, sd, dynWith(t), "")
+	logLines := 0
+	p.log = funcr.New(func(string, string) { logLines++ }, funcr.Options{})
+	p.mu.Lock()
+	p.releasing = append(p.releasing, Claim{ID: "sb_leaving", Token: "t"})
+	p.mu.Unlock()
+
+	orphans, stale, ok := p.OrphanScan(ctx)
+	if !ok || len(orphans) != 0 || len(stale) != 0 || logLines != 0 {
+		t.Fatalf("a sandbox queued for release was judged: orphans=%v stale=%v ok=%v logs=%d", orphans, stale, ok, logLines)
+	}
+}
+
 func TestStateRoundTrip(t *testing.T) {
 	ctx := t.Context()
 	statePath := filepath.Join(t.TempDir(), "claims.json")

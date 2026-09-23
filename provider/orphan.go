@@ -31,11 +31,18 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 	for key, c := range p.claims {
 		claimed[c.ID] = key
 	}
+	queued := make(map[string]struct{}, len(p.releasing))
+	for _, c := range p.releasing {
+		queued[c.ID] = struct{}{}
+	}
 	p.mu.RUnlock()
 
 	verdicts := make(map[string]string, len(listed))
 	for _, s := range listed {
 		if _, ok := claimed[s.ID]; ok {
+			continue
+		}
+		if _, ok := queued[s.ID]; ok {
 			continue
 		}
 		if s.ClaimRef != "" {
