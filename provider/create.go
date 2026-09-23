@@ -136,6 +136,11 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	if !ok || !p.settled(key) {
 		return Claim{}, false
 	}
+	if c.preservedForAnotherOwner(pod) {
+		delete(p.claims, key)
+		p.releasing = append(p.releasing, c)
+		return Claim{}, false
+	}
 	c.PodUID = string(pod.UID)
 	c.Owner = nil
 	if c.ClaimedAt.IsZero() {

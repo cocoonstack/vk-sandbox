@@ -1447,6 +1447,40 @@ func TestAdoptionCancelsTheOwnerRecheck(t *testing.T) {
 	}
 }
 
+func TestAPodOfANewOwnerGenerationClaimsFresh(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p.claimFor("ns1/sb-pod")
+	p.recheckOwners(ctx, time.Now(), time.Minute)
+
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	if err := dyn.Tracker().Create(sandboxGVR, ownerSandbox("ns1", "sb-owner", "owner-uid-2", false), "ns1"); err != nil {
+		t.Fatalf("recreate owner: %v", err)
+	}
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid-2")); err != nil {
+		t.Fatalf("CreatePod for the recreated owner: %v", err)
+	}
+	c, ok := p.claimFor("ns1/sb-pod")
+	if !ok || c.ID == old.ID || sd.claimCount() != 2 {
+		t.Fatalf("the recreated owner's Pod adopted its predecessor's sandbox: %+v ok=%v claims=%d", c, ok, sd.claimCount())
+	}
+	p.recheckOwners(ctx, time.Now(), time.Minute)
+	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the predecessor's sandbox was not released: %v", sd.releases)
+	}
+}
+
 func TestARestartKeepsThePendingOwnerRecheck(t *testing.T) {
 	ctx := t.Context()
 	path := t.TempDir() + "/claims.json"

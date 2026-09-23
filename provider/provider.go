@@ -53,6 +53,11 @@ func (c Claim) expired(now time.Time) bool {
 	return !c.Deadline.IsZero() && !now.Before(c.Deadline.Time)
 }
 
+func (c Claim) preservedForAnotherOwner(pod *corev1.Pod) bool {
+	ref := metav1.GetControllerOf(pod)
+	return c.Owner != nil && (ref == nil || ref.UID != c.Owner.UID)
+}
+
 // Config assembles a Provider.
 type Config struct {
 	Client SandboxdClient
