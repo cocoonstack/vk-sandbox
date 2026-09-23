@@ -113,10 +113,10 @@ written compactly (shown expanded here) because every claim rewrites it:
 | `deadline` | The cached lease end. Once it passes, the provider confirms the node's state: a listed sandbox refreshes the deadline, confirmed absence publishes `Failed`, and a failed listing defers the decision. Absent in older tables; the vouching pass backfills it |
 | `owner` | The controller owner recorded when a Pod deletion preserved the claim. The owner re-check reads it until the owner is gone and the sandbox released; a replacement Pod adopting the claim clears it |
 
-A top-level `releasing` list holds claims the owner re-check has withdrawn from
-their pod key but not yet released; each is retried every tick until sandboxd
-confirms the sandbox gone, so a release that fails keeps its credential across
-restarts.
+A top-level `releasing` list holds claims withdrawn from their pod key, by the
+owner re-check or by a Pod of another owner, but not yet released; each is
+retried every tick until sandboxd confirms the sandbox gone, so a release that
+fails keeps its credential across restarts.
 
 It is written with a tmp-file + atomic rename at mode `0600`, its directory
 created at `0700`, and reloaded on startup. Concurrent Pod creates serialize
