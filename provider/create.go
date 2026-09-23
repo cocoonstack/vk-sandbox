@@ -18,7 +18,7 @@ import (
 
 // Annotation keys; template, net and size are the operator's selector keys verbatim.
 const (
-	// AnnRuntime routes a pod to this provider; the operator's runtime mutator sets it.
+	// AnnRuntime names the runtime the pod template asks for; an absent value means sandboxd.
 	AnnRuntime = "sandbox.cocoonstack.io/runtime"
 	// RuntimeSandboxd is the AnnRuntime value this provider serves.
 	RuntimeSandboxd = "sandboxd"
