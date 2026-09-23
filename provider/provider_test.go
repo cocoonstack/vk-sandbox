@@ -1584,6 +1584,31 @@ func TestARestartKeepsTheSandboxOfAPodWhoseOwnerChanged(t *testing.T) {
 	}
 }
 
+func TestAPreservedClaimAnswersToTheOwnerThatPreservedIt(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	p := newTestProvider(t, sd, dynWith(t, ownerSandbox("ns1", "sb-pod", "owner-uid", false)), "")
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-1", "", "")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	old, _ := p.claimFor("ns1/sb-pod")
+	adopted := sandboxPod("ns1", "sb-pod", "uid-1", "sb-pod", "owner-uid")
+	if err := p.UpdatePod(ctx, adopted); err != nil {
+		t.Fatalf("UpdatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, adopted); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-pod", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod replacement: %v", err)
+	}
+	c, ok := p.claimFor("ns1/sb-pod")
+	if !ok || c.ID != old.ID || sd.claimCount() != 1 || sd.releaseCount() != 0 {
+		t.Fatalf("the Sandbox that adopted a bare Pod lost its sandbox when that Pod was replaced: %+v ok=%v claims=%d releases=%v", c, ok, sd.claimCount(), sd.releases)
+	}
+}
+
 func TestALegacyClaimWithoutAnAuthorityIsStillAdopted(t *testing.T) {
 	path := t.TempDir() + "/claims.json"
 	legacy := `{"claims":{"ns/p":{"id":"sb_prev","token":"t","podUID":"uid-1","claimedAt":"2026-01-01T00:00:00Z"}}}`
