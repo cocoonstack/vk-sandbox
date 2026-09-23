@@ -43,7 +43,7 @@ type Claim struct {
 	PodUID  string `json:"podUID"` // forensics only; the stale-UID guard reads the pod table
 	// ClaimedAt is reported as the Pod start time, so it must not move between reads.
 	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
-	// Deadline is the lease end sandboxd returned; zero means unknown (an older table).
+	// Deadline is the lease end sandboxd returned; zero means none known (an older table, or a keep-forever archive).
 	Deadline metav1.Time `json:"deadline,omitzero"`
 	// Owner is recorded when a delete preserves the claim; the owner re-check releases once it is gone.
 	Owner *metav1.OwnerReference `json:"owner,omitempty"`

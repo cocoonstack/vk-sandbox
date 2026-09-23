@@ -53,7 +53,6 @@ func (p *Provider) GetPodStatus(_ context.Context, namespace, name string) (*cor
 	return &st, nil
 }
 
-// expiredStatus reports a pod whose lease ended; the reaper destroys the VM at the deadline.
 func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 	st := corev1.PodStatus{
 		Phase:     corev1.PodFailed,
@@ -71,7 +70,6 @@ func expiredStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 	return st
 }
 
-// runningStatus reports the pod Running at the VM address with one synthetic ready container per spec container.
 func runningStatus(pod *corev1.Pod, c Claim) corev1.PodStatus {
 	ip := claimIP(c.Address)
 	st := corev1.PodStatus{

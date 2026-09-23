@@ -62,7 +62,7 @@ const (
 	podRetryBaseDelay = 5 * time.Millisecond
 	podRetryMaxDelay  = 1000 * time.Second
 
-	// TaintKey marks the virtual node; the operator adds the matching toleration to the pods it routes here.
+	// TaintKey marks the virtual node; a sandbox Pod template carries the matching toleration.
 	TaintKey = "virtual-kubelet.io/provider"
 )
 
@@ -282,7 +282,6 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	}), nil
 }
 
-// warningsOnly hands the pod controller a recorder that drops its Normal events, one per pod create, update and delete.
 func (o *options) warningsOnly(clientset kubernetes.Interface) nodeutil.NodeOpt {
 	eb := record.NewBroadcaster()
 	eb.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: clientset.CoreV1().Events("")})

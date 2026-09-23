@@ -8,7 +8,6 @@ import (
 
 var _ record.EventRecorder = warningEvents{}
 
-// warningEvents forwards Warning events and drops the rest.
 type warningEvents struct{ record.EventRecorder }
 
 func (w warningEvents) Event(object runtime.Object, eventtype, reason, message string) {

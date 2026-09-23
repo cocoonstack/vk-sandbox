@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// ownerRecheckMaxDelay caps the backoff between owner reads for one preserved claim.
 const ownerRecheckMaxDelay = 10 * time.Minute
 
 type ownerRecheck struct {
