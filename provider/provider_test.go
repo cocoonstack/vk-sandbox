@@ -672,6 +672,30 @@ func TestAStrandedClaimIsReturnedBeforeItsKeyIsReused(t *testing.T) {
 	}
 }
 
+func TestAFailedClaimLeavesThePodForTheCreateRetry(t *testing.T) {
+	sd := &fakeSandboxd{claimErr: sandboxd.ErrNodeAtCapacity}
+	p := newTestProvider(t, sd, dynWith(t), "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "", "")
+
+	if err := p.CreatePod(t.Context(), pod); !errors.Is(err, sandboxd.ErrNodeAtCapacity) {
+		t.Fatalf("CreatePod = %v, want the capacity miss", err)
+	}
+	if cached, _ := p.GetPod(t.Context(), "ns1", "sb-pod"); cached != nil {
+		t.Fatal("a Pod whose claim failed is cached, so virtual-kubelet calls UpdatePod instead of retrying CreatePod")
+	}
+	if _, ok := p.heldClaimFor("ns1/sb-pod"); ok {
+		t.Fatal("a failed claim left a row")
+	}
+
+	sd.claimErr = nil
+	if err := p.CreatePod(t.Context(), pod); err != nil {
+		t.Fatalf("CreatePod retry: %v", err)
+	}
+	if _, ok := p.claimFor("ns1/sb-pod"); !ok || sd.claimCount() != 1 {
+		t.Fatalf("the retry did not claim: ok=%v claims=%d", ok, sd.claimCount())
+	}
+}
+
 func TestTentativeClaimRetriesThroughUpdatePod(t *testing.T) {
 	dir := t.TempDir()
 	sd := &fakeSandboxd{releaseErr: errTestReleaseFailed}

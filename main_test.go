@@ -3,15 +3,18 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 )
 
@@ -49,6 +52,25 @@ func TestPodQueuesBackOffAFailingPod(t *testing.T) {
 				t.Fatalf("qps %v: %s queue retried a failing pod after %v, want %v", qps, queue, d, 2*podRetryBaseDelay)
 			}
 		}
+	}
+}
+
+func TestWarningEventsDropNormalEvents(t *testing.T) {
+	sink := record.NewFakeRecorder(8)
+	w := warningEvents{sink}
+	pod := &corev1.Pod{Name: "p"}
+	for _, eventtype := range []string{corev1.EventTypeNormal, corev1.EventTypeWarning} {
+		w.Event(pod, eventtype, "R", "m")
+		w.Eventf(pod, eventtype, "R", "m %d", 1)
+		w.AnnotatedEventf(pod, nil, eventtype, "R", "m %d", 2)
+	}
+	close(sink.Events)
+	var got []string
+	for e := range sink.Events {
+		got = append(got, e)
+	}
+	if want := []string{"Warning R m", "Warning R m 1", "Warning R m 2"}; !slices.Equal(got, want) {
+		t.Fatalf("recorded %q, want only the warnings %q", got, want)
 	}
 }
 

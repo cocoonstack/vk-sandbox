@@ -170,6 +170,15 @@ func TestPublisherHoldsTheInventoryWhenTheNodeIsUnreadable(t *testing.T) {
 	}
 }
 
+func TestPublisherHoldsTheInventoryWhenNodeInfoFails(t *testing.T) {
+	applier := &captureApplier{}
+	info := staticInfo{err: errors.New("sandboxd unreachable")}
+	pub := NewPublisher("n1", staticLive{}, info, registered("n1", "uid-1"), applier, logr.Discard())
+	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
+		t.Fatalf("a failed node-info read must skip the apply, not publish the node without its address and pools: err=%v applied=%+v", err, applier.got)
+	}
+}
+
 type staticClaims map[string]provider.Claim
 
 func (s staticClaims) ClaimAddresses() map[string]string {
