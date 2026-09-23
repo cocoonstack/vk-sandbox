@@ -12,7 +12,8 @@ Nothing on the sandboxd wire is reimplemented here -- `Claim`, `Release`, the
 live index (`Sandboxes`) and warm-pool capacity (`Info`) all come from
 `github.com/cocoonstack/sandbox-operator/pkg/sandboxd`, so the wire
 contract has exactly one home. The same repo supplies `pkg/scale`'s selector
-keys and the `InventoryApplier` used for the NodeInventory apply.
+keys, the entry mapping (`scale.EntryFromSummary`) and the `InventoryApplier`
+used for the NodeInventory apply.
 
 ## The contracts this provider keeps
 
@@ -182,12 +183,25 @@ object named after the node, every `--publish-interval`, with field owner
 per-sandbox etcd object, the same summarize-on-the-node pattern as
 `metrics.k8s.io`.
 
+Each apply names this node's `Node` as the object's owner, so deleting the
+`Node` garbage-collects its `NodeInventory`: the node leaves the claim path and
+its sandboxes leave the read view, even while sandboxd keeps serving them and
+their leases expire there. On a node's first start the virtual node registers
+after the first publish, so that one goes out unowned and the next sets the
+owner. Once this process has seen its `Node`, a `Node` that is gone means it
+was deleted: the publish stops instead of bringing the collected inventory back
+unowned, and the node returns when vk-sandbox restarts and registers again. A
+publish that cannot read the `Node` for any other reason is skipped until the
+next tick.
+
 ```
 sandboxd GET /v1/sandboxes ---+
   (authoritative live set)    |
                               +--> LiveSource --> entries[]
-provider claims table --------+       (name = claim_ref, else sandboxd id;
-  (address per claim id)              ID = sandboxd claim id;
+provider claims table --------+       (scale.EntryFromSummary, the mapping the
+  (address per claim id)              apiserver's live reads use:
+                                      name = claim_ref, else sandboxd id;
+                                      ID = sandboxd claim id;
                                       phase = Running | Hibernated;
                                       deadline = the row's lease end;
                                       claimedAt = the row's first grant;
@@ -199,7 +213,7 @@ sandboxd GET /v1/info --------> NodeInfoSource --> {Address, Pools[]}
               entries[] + Address + Pools[]
                           |
                           v
-            NodeInventory (server-side apply, one per node)
+            NodeInventory (server-side apply, one per node, owned by its Node)
                           |
                           v
         sandbox-operator aggregated apiserver serves

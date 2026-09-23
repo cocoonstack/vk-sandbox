@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
@@ -24,6 +26,11 @@ import (
 // ClaimAddresses exposes the provider's sandboxd id → address view.
 type ClaimAddresses interface {
 	ClaimAddresses() map[string]string
+}
+
+// NodeGetter reads the Node that owns this node's NodeInventory.
+type NodeGetter interface {
+	Get(ctx context.Context, name string, opts metav1.GetOptions) (*corev1.Node, error)
 }
 
 var _ scale.NodeLiveSource = (*LiveSource)(nil)
@@ -50,22 +57,9 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 
 	out := make([]scale.InventoryEntry, 0, len(listed))
 	for _, row := range listed {
-		name := row.ClaimRef
-		name = cmp.Or(name, row.ID)
-		phase := scale.PhaseRunning
-		if row.Hibernated {
-			phase = scale.PhaseHibernated
-		}
-		out = append(out, scale.InventoryEntry{
-			Name:      name,
-			ID:        row.ID,
-			Phase:     phase,
-			ClaimRef:  name,
-			Address:   addrByID[row.ID],
-			Template:  row.Key.Template,
-			Deadline:  publishedTime(row.Deadline),
-			ClaimedAt: publishedTime(row.ClaimedAt),
-		})
+		e := scale.EntryFromSummary(row)
+		e.Address = addrByID[row.ID]
+		out = append(out, e)
 	}
 	slices.SortFunc(out, func(a, b scale.InventoryEntry) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
@@ -79,28 +73,36 @@ type Publisher struct {
 	node    string
 	live    scale.NodeLiveSource
 	info    NodeInfoSource
+	nodes   NodeGetter
 	applier scale.InventoryApplier
 	log     logr.Logger
+
+	nodeSeen bool
 }
 
 // NewPublisher builds a Publisher for node. info may be nil, in which case the
 // applied NodeInventory carries entries only (no address/pools).
-func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, applier scale.InventoryApplier, log logr.Logger) *Publisher {
-	return &Publisher{node: node, live: live, info: info, applier: applier, log: log}
+func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, nodes NodeGetter, applier scale.InventoryApplier, log logr.Logger) *Publisher {
+	return &Publisher{node: node, live: live, info: info, nodes: nodes, applier: applier, log: log}
 }
 
 // Publish server-side-applies this node's live sandboxes as a NodeInventory object, returning the summarized entry count.
 func (p *Publisher) Publish(ctx context.Context) (int, error) {
+	owners, err := p.owners(ctx)
+	if err != nil {
+		return 0, err
+	}
 	entries, err := p.live.LiveSandboxes(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("inventory: read node %q live sandboxes: %w", p.node, err)
 	}
 	inv := &scale.NodeInventory{
-		Kind:       scale.NodeInventoryGVK.Kind,
-		APIVersion: scale.NodeInventoryGVK.GroupVersion().String(),
-		Name:       p.node,
-		Node:       p.node,
-		Entries:    entries,
+		Kind:            scale.NodeInventoryGVK.Kind,
+		APIVersion:      scale.NodeInventoryGVK.GroupVersion().String(),
+		Name:            p.node,
+		Node:            p.node,
+		Entries:         entries,
+		OwnerReferences: owners,
 	}
 	if p.info != nil {
 		ni, infoErr := p.info.NodeInfo(ctx)
@@ -135,10 +137,18 @@ func (p *Publisher) PublishPeriodically(ctx context.Context, interval time.Durat
 	}
 }
 
-func publishedTime(t time.Time) *metav1.Time {
-	if t.IsZero() {
-		return nil
+// owners names this node's Node as the owner: none before the Node registers, an error once it is deleted.
+func (p *Publisher) owners(ctx context.Context) ([]metav1.OwnerReference, error) {
+	node, err := p.nodes.Get(ctx, p.node, metav1.GetOptions{ResourceVersion: "0"})
+	switch {
+	case err == nil:
+		p.nodeSeen = true
+		return []metav1.OwnerReference{{APIVersion: "v1", Kind: "Node", Name: node.Name, UID: node.UID}}, nil
+	case apierrors.IsNotFound(err) && !p.nodeSeen:
+		return nil, nil
+	case apierrors.IsNotFound(err):
+		return nil, fmt.Errorf("inventory: node %q was deleted; its inventory is not republished", p.node)
+	default:
+		return nil, fmt.Errorf("inventory: read node %q: %w", p.node, err)
 	}
-	m := metav1.NewTime(t)
-	return &m
 }
