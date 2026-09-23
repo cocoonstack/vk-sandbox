@@ -2,10 +2,16 @@ package inventory
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/fake"
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/api/v1beta1"
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
@@ -76,7 +82,7 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 		},
 	}}
 	applier := &captureApplier{}
-	pub := NewPublisher("vk-sandboxd-26", live, info, applier, logr.Discard())
+	pub := NewPublisher("vk-sandboxd-26", live, info, registered("vk-sandboxd-26", "uid-26"), applier, logr.Discard())
 
 	n, err := pub.Publish(t.Context())
 	if err != nil {
@@ -108,12 +114,59 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 
 func TestPublisherWithoutInfo(t *testing.T) {
 	applier := &captureApplier{}
-	pub := NewPublisher("n1", staticLive{}, nil, applier, logr.Discard())
+	pub := NewPublisher("n1", staticLive{}, nil, registered("n1", "uid-1"), applier, logr.Discard())
 	if _, err := pub.Publish(t.Context()); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
 	if applier.got.Address != "" || applier.got.Pools != nil {
 		t.Fatalf("nil info must leave address/pools empty: %+v", applier.got)
+	}
+}
+
+func TestPublisherHandsTheInventoryToItsNode(t *testing.T) {
+	applier := &captureApplier{}
+	pub := NewPublisher("n1", staticLive{}, nil, registered("n1", "uid-1"), applier, logr.Discard())
+	if _, err := pub.Publish(t.Context()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	want := []metav1.OwnerReference{{APIVersion: "v1", Kind: "Node", Name: "n1", UID: "uid-1"}}
+	if !slices.Equal(applier.got.OwnerReferences, want) {
+		t.Fatalf("ownerReferences = %+v, want %+v so deleting the Node collects its inventory", applier.got.OwnerReferences, want)
+	}
+}
+
+func TestPublisherPublishesBeforeTheNodeRegisters(t *testing.T) {
+	applier := &captureApplier{}
+	pub := NewPublisher("n1", staticLive{}, nil, registered("other", "uid-2"), applier, logr.Discard())
+	if _, err := pub.Publish(t.Context()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if applier.got == nil || len(applier.got.OwnerReferences) != 0 {
+		t.Fatalf("a node not yet registered must still publish, unowned: %+v", applier.got)
+	}
+}
+
+func TestPublisherStopsOnceItsNodeIsDeleted(t *testing.T) {
+	cs := fake.NewClientset(&corev1.Node{Name: "n1", UID: "uid-1"})
+	applier := &captureApplier{}
+	pub := NewPublisher("n1", staticLive{}, nil, cs.CoreV1().Nodes(), applier, logr.Discard())
+	if _, err := pub.Publish(t.Context()); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+	if err := cs.CoreV1().Nodes().Delete(t.Context(), "n1", metav1.DeleteOptions{}); err != nil {
+		t.Fatalf("delete node: %v", err)
+	}
+	applier.got = nil
+	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
+		t.Fatalf("a deleted Node must stop the publish, or the collected inventory comes back unowned: err=%v applied=%+v", err, applier.got)
+	}
+}
+
+func TestPublisherHoldsTheInventoryWhenTheNodeIsUnreadable(t *testing.T) {
+	applier := &captureApplier{}
+	pub := NewPublisher("n1", staticLive{}, nil, unreadableNodes{}, applier, logr.Discard())
+	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
+		t.Fatalf("an unreadable Node must fail the publish before the apply: err=%v applied=%+v", err, applier.got)
 	}
 }
 
@@ -151,4 +204,14 @@ type captureApplier struct{ got *scale.NodeInventory }
 func (c *captureApplier) Apply(_ context.Context, inv *scale.NodeInventory) error {
 	c.got = inv
 	return nil
+}
+
+type unreadableNodes struct{}
+
+func (unreadableNodes) Get(context.Context, string, metav1.GetOptions) (*corev1.Node, error) {
+	return nil, errors.New("apiserver unavailable")
+}
+
+func registered(name, uid string) NodeGetter {
+	return fake.NewClientset(&corev1.Node{Name: name, UID: types.UID(uid)}).CoreV1().Nodes()
 }

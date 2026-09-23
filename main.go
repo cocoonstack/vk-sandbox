@@ -201,7 +201,7 @@ func (o *options) run() error {
 	// must be pushed or a reaped sandbox stays Running forever.
 	go p.RunLeaseWatch(ctx, leaseWatchInterval)
 	if o.publishInventory {
-		if err := o.startInventoryPublisher(ctx, cfg, p, sdClient); err != nil {
+		if err := o.startInventoryPublisher(ctx, cfg, clientset.CoreV1().Nodes(), p, sdClient); err != nil {
 			return err
 		}
 	}
@@ -313,7 +313,7 @@ func (o *options) podQueueLimits(c *node.PodControllerConfig) error {
 	return nil
 }
 
-func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, p *provider.Provider, sd *sandboxd.Client) error {
+func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, nodes inventory.NodeGetter, p *provider.Provider, sd *sandboxd.Client) error {
 	cclient, err := ctrlclient.New(cfg, ctrlclient.Options{})
 	if err != nil {
 		return fmt.Errorf("controller-runtime client for inventory publish: %w", err)
@@ -325,6 +325,7 @@ func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config,
 	pub := inventory.NewPublisher(o.nodeName,
 		inventory.NewLiveSource(p, sd),
 		inventory.NewNodeInfoSource(advertiseAddr, sd),
+		nodes,
 		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"),
 		o.log.WithName("inventory"))
 	go pub.PublishPeriodically(ctx, o.publishInterval)
