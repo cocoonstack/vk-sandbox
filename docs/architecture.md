@@ -26,7 +26,8 @@ pinned by intent tests:
    structured NotFound naming it in `Details.Name`), replaced by another UID,
    **in teardown** (deletionTimestamp set), or **expired** (Ready reason
    `SandboxExpired`). Otherwise the claim is preserved, and a
-   same-name replacement pod **adopts it in place** — no second claim, same VM.
+   same-name replacement pod of the same owner **adopts it in place** — no
+   second claim, same VM.
    A preserved claim's owner is re-checked with backoff, so a namespace
    deletion that removes Pod and owner independently still releases the VM. See
    [delete authorization](#delete-authorization-pod-deletion-is-not-vm-authority).
@@ -64,6 +65,7 @@ CreatePod
         |
         +-- a claim already exists for <namespace>/<name>
         |        -> adopt in place: rebind the pod UID, no new VM
+        |           (one preserved for another owner is queued for release instead)
         |
         +-- otherwise: POST /v1/claim {template, net, size, ttl_seconds, claim_ref}
                  |
@@ -113,9 +115,9 @@ through the dynamic client before deciding; a bare Pod is its own authority:
 | Any query error, or no dynamic client configured | preserve |
 
 Preserve drops only the Pod entry; the claim -- and with it the release token
--- stays in the table so a same-name replacement Pod adopts the same VM. The
-stale-UID guard runs first: a request carrying a previous Pod generation's UID
-is ignored outright.
+-- stays in the table so a same-name replacement Pod of the same owner adopts
+the same VM. The stale-UID guard runs first: a request carrying a previous Pod
+generation's UID is ignored outright.
 
 Preserve also records the controller owner with the claim. Deleting a namespace
 deletes its Pods and their owning `Sandbox` objects independently, so about half
@@ -130,7 +132,10 @@ A claim the re-check releases is first withdrawn from its key into a persisted
 release queue, so a replacement Pod arriving meanwhile claims fresh instead of
 adopting a sandbox on its way out; a release that fails stays queued with its
 credential and is retried every tick, across restarts, until sandboxd confirms
-it gone. The recorded owner survives a restart with the claim.
+it gone. The recorded owner survives a restart with the claim. A same-name Pod
+whose controller owner is not the recorded one, such as the Pod of a Sandbox
+deleted and recreated under the same name, never adopts the claim: it claims
+fresh, and the old claim goes to the release queue.
 
 The owner GVR is derived from `apiVersion` + `kind` with the English plural
 rules (`Sandbox` -> `sandboxes`, `policy` -> `policies`), never a naive
