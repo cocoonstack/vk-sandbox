@@ -32,8 +32,11 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -88,6 +91,7 @@ func main() {
 	flag.BoolVar(&o.publishInventory, "publish-inventory", false, "server-side-apply this node's NodeInventory for the L3 aggregation layer")
 	flag.DurationVar(&o.publishInterval, "publish-interval", 30*time.Second, "NodeInventory publish cadence")
 	flag.StringVar(&o.podLabels, "node-labels", "sandbox.cocoonstack.io/runtime=sandboxd", "comma-separated extra node labels key=value")
+	flag.BoolVar(&o.disablePodEvents, "disable-pod-events", false, "drop the pod controller's Normal events (one per pod create, update and delete); warnings still reach the apiserver")
 	showVersion := flag.Bool("version", false, "print build version and exit")
 	flag.Parse()
 
@@ -122,6 +126,7 @@ type options struct {
 	orphanInterval   time.Duration
 	publishInterval  time.Duration
 	publishInventory bool
+	disablePodEvents bool
 	kubeQPS          float64
 	kubeBurst        int
 
@@ -272,6 +277,9 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 			return nil
 		},
 	}
+	if o.disablePodEvents {
+		opts = append(opts, o.warningsOnly(clientset))
+	}
 
 	// virtual-kubelet only serves the kubelet API over TLS. Reuse the node's
 	// kubelet cert when present, else self-sign one so every node's API surface
@@ -292,6 +300,17 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 		c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
 		return nil
 	}), nil
+}
+
+// warningsOnly hands the pod controller a recorder that drops Normal events; the library's own would emit one per pod create, update and delete.
+func (o *options) warningsOnly(clientset kubernetes.Interface) nodeutil.NodeOpt {
+	eb := record.NewBroadcaster()
+	eb.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: clientset.CoreV1().Events("")})
+	recorder := eb.NewRecorder(scheme.Scheme, corev1.EventSource{Component: o.nodeName + "/pod-controller"})
+	return func(c *nodeutil.NodeConfig) error {
+		c.EventRecorder = warningEvents{recorder}
+		return nil
+	}
 }
 
 func (o *options) podQueueLimits(c *node.PodControllerConfig) error {
