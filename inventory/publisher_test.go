@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -179,6 +181,28 @@ func TestPublisherHoldsTheInventoryWhenNodeInfoFails(t *testing.T) {
 	}
 }
 
+func TestPublisherHoldsTheInventoryWhenSandboxdCannotBeListed(t *testing.T) {
+	applier := &captureApplier{}
+	live := NewLiveSource(staticClaims{}, unlistableSandboxd{})
+	pub := NewPublisher("n1", live, nil, registered("n1", "uid-1"), applier, logr.Discard())
+	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
+		t.Fatalf("a failed sandboxd listing must skip the apply, not publish the node with no sandboxes: err=%v applied=%+v", err, applier.got)
+	}
+}
+
+func TestPublisherPublishesAtStartAndOnEveryTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		applier := &captureApplier{}
+		pub := NewPublisher("n1", staticLive{}, nil, registered("n1", "uid-1"), applier, logr.Discard())
+		go pub.PublishPeriodically(t.Context(), time.Second)
+		time.Sleep(2 * time.Second)
+		synctest.Wait()
+		if got := applier.applies.Load(); got != 3 {
+			t.Fatalf("applies after two 1s ticks = %d, want 3 (start, 1s, 2s)", got)
+		}
+	})
+}
+
 type staticClaims map[string]provider.Claim
 
 func (s staticClaims) ClaimAddresses() map[string]string {
@@ -208,10 +232,14 @@ type staticInfo struct {
 
 func (s staticInfo) NodeInfo(context.Context) (NodeInfo, error) { return s.info, s.err }
 
-type captureApplier struct{ got *scale.NodeInventory }
+type captureApplier struct {
+	got     *scale.NodeInventory
+	applies atomic.Int32
+}
 
 func (c *captureApplier) Apply(_ context.Context, inv *scale.NodeInventory) error {
 	c.got = inv
+	c.applies.Add(1)
 	return nil
 }
 
@@ -219,6 +247,12 @@ type unreadableNodes struct{}
 
 func (unreadableNodes) Get(context.Context, string, metav1.GetOptions) (*corev1.Node, error) {
 	return nil, errors.New("apiserver unavailable")
+}
+
+type unlistableSandboxd struct{}
+
+func (unlistableSandboxd) Sandboxes(context.Context) ([]sandboxd.SandboxSummary, error) {
+	return nil, errors.New("sandboxd unreachable")
 }
 
 func registered(name, uid string) NodeGetter {
