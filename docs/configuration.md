@@ -96,6 +96,7 @@ written compactly (shown expanded here) because every claim rewrites it:
       "token": "...",
       "address": "10.0.0.5:7777",
       "podUID": "6f1c...",
+      "authority": "9a2e...",
       "claimedAt": "2026-07-27T02:15:00Z",
       "deadline": "2026-07-28T02:15:00Z"
     }
@@ -108,7 +109,8 @@ written compactly (shown expanded here) because every claim rewrites it:
 | `id` | sandboxd claim id |
 | `token` | Release credential; never leaves the node |
 | `address` | sandboxd `owner_addr` for the claim (`host:port`); the host becomes the Pod IP |
-| `podUID` | UID of the Pod generation that last held the claim (operator forensics; the stale-request guard reads the in-memory pod table, not this field) |
+| `podUID` | UID of the Pod that holds the claim. After a restart the same Pod adopts its claim again even if its controller owner changed. The stale-request guard reads the in-memory pod table, not this field |
+| `authority` | Recorded when the claim is taken or adopted: the Pod's controller owner UID, or the Pod's own UID for a bare Pod. A same-name Pod adopts the claim only if it is the Pod that holds it or has this authority (while `owner` is set, that owner instead); any other Pod claims fresh and the claim is queued for release. Absent in tables from older builds, where a claim without `owner` is adopted by any same-name Pod, as before |
 | `claimedAt` | When the claim was taken; reported as the Pod start time, which must not move between reads. A table written before this field existed gets it filled in on the next load |
 | `deadline` | The cached lease end. Once it passes, the provider confirms the node's state: a listed sandbox refreshes the deadline, confirmed absence publishes `Failed`, and a failed listing defers the decision. Absent in older tables; the vouching pass backfills it |
 | `owner` | The controller owner recorded when a Pod deletion preserved the claim. The owner re-check reads it until the owner is gone and the sandbox released; a replacement Pod adopting the claim clears it |

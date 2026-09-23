@@ -65,7 +65,8 @@ CreatePod
         |
         +-- a claim already exists for <namespace>/<name>
         |        -> adopt in place: rebind the pod UID, no new VM
-        |           (one preserved for another owner is queued for release instead)
+        |           (only the same Pod or a Pod of the claim's owner adopts;
+        |           a claim held for another owner is queued for release instead)
         |
         +-- otherwise: POST /v1/claim {template, net, size, ttl_seconds, claim_ref}
                  |
@@ -77,7 +78,7 @@ CreatePod
                  +-- ClaimResult {id, token, owner_addr}
                           |
                           v
-                 claims[key] = {ID, Token, Address, PodUID, ClaimedAt, Deadline}
+                 claims[key] = {ID, Token, Address, PodUID, Authority, ClaimedAt, Deadline}
                  persist the table, then notify the kubelet:
                    phase Running, PodIP/HostIP = host of owner_addr,
                    one synthetic ready container per spec container
@@ -137,6 +138,16 @@ whose controller owner is not the recorded one, such as the Pod of a Sandbox
 deleted and recreated under the same name, never adopts the claim: it claims
 fresh, and the old claim goes to the release queue.
 
+A Pod that leaves the apiserver while the provider is down, such as one
+force-deleted during an outage, never reaches `DeletePod`, so no owner is
+recorded for its claim. Every claim therefore also records its **authority**
+when it is taken or adopted: the Pod's controller owner UID, or the Pod's own
+UID for a bare Pod. A same-name Pod, after a restart or otherwise, adopts only
+if it is the Pod that holds the claim or has the same authority; the
+preserve-time owner, when recorded, takes the authority's place. Any other Pod
+claims fresh and the old claim goes to the release queue. A claim from a table
+written before the field existed has no authority and is adopted as before.
+
 The owner GVR is derived from `apiVersion` + `kind` with the English plural
 rules (`Sandbox` -> `sandboxes`, `policy` -> `policies`), never a naive
 `+ "s"`. Even so, a wrong guess is safe: an endpoint-level 404 carries no
@@ -148,7 +159,7 @@ retries with the credential intact.
 
 ## Claims table persistence
 
-The claims table (`{id, token, address, podUID, claimedAt, deadline, owner}` per
+The claims table (`{id, token, address, podUID, authority, claimedAt, deadline, owner}` per
 pod key, plus the `releasing` list of withdrawn claims awaiting release) is written to `--state-path` as JSON with a tmp-file + rename, mode
 `0600`, directory mode `0700`. It is reloaded at startup, so a provider
 restart keeps the authority to tear down exactly what it delivered. The

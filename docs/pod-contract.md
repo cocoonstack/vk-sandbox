@@ -89,7 +89,7 @@ through the sandbox SDK and preview URLs.
 | Missing or invalid `template` / `ttl-seconds` | `CreatePod` fails; no claim is made |
 | Pod deleted, owner `Sandbox` still alive | The claim is **preserved**; the VM keeps running. The owner is re-checked with backoff, and once it is gone, in teardown, expired or replaced the VM is released |
 | Pod deleted, owner `Sandbox` expired (Ready reason `SandboxExpired`) | Release authorized: the operator tore the workload down and no replacement Pod comes |
-| A replacement Pod with the same namespace/name and owner | Adopts the preserved claim in place -- same VM, no second claim. A Pod of a recreated owner claims fresh, and the preserved VM is released |
+| A replacement Pod with the same namespace/name and owner | Adopts the claim in place -- same VM, no second claim, also after a provider restart. A Pod of a recreated owner, or a new bare Pod, claims fresh, and the old VM is released |
 | Pod update | Retries a tentative claim left by a failed create; otherwise records metadata only, since running sandbox Pods are immutable at the runtime level |
 | Owner `Sandbox` deleted | Release authorized; the microVM is destroyed |
 
