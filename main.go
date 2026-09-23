@@ -27,12 +27,14 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
+	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/workqueue"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 
@@ -57,6 +59,10 @@ const (
 	// stay; leases run for hours, so half a minute of slop is immaterial.
 	leaseWatchInterval = 30 * time.Second
 
+	// Per-pod retry backoff of the pod queues, workqueue's own defaults.
+	podRetryBaseDelay = 5 * time.Millisecond
+	podRetryMaxDelay  = 1000 * time.Second
+
 	// TaintKey marks the virtual node; the operator's runtime mutator adds the
 	// matching toleration to sandbox pods it routes here.
 	TaintKey = "virtual-kubelet.io/provider"
@@ -72,8 +78,8 @@ func main() {
 	flag.StringVar(&o.nodeCPU, "node-cpu", envOr("VK_NODE_CPU", "4000"), "advertised node CPU capacity (a scheduling budget; the real resource is sandboxd's)")
 	flag.StringVar(&o.nodeMem, "node-memory", envOr("VK_NODE_MEMORY", "8Ti"), "advertised node memory capacity")
 	flag.StringVar(&o.nodePods, "node-pods", envOr("VK_NODE_PODS", "2000"), "advertised node max pods")
-	flag.Float64Var(&o.kubeQPS, "kube-api-qps", 200, "client-go QPS for the kubernetes clients (status pushes, delete authorization, inventory publish)")
-	flag.IntVar(&o.kubeBurst, "kube-api-burst", 400, "client-go burst on top of --kube-api-qps")
+	flag.Float64Var(&o.kubeQPS, "kube-api-qps", 200, "client-go QPS for the kubernetes clients (status pushes, delete authorization, inventory publish), and the rate of the pod create, delete and status queues")
+	flag.IntVar(&o.kubeBurst, "kube-api-burst", 400, "client-go burst on top of --kube-api-qps, and the burst of the pod queues")
 	flag.StringVar(&o.sandboxdURL, "sandboxd-url", envOr("SANDBOXD_URL", "http://127.0.0.1:7777"), "sandboxd base URL")
 	flag.StringVar(&o.sandboxdAddr, "sandboxd-advertise-addr", envOr("SANDBOXD_ADVERTISE_ADDR", ""), "sandboxd advertise address (host:port) published in NodeInventory for claim routing; defaults to the host:port of --sandboxd-url")
 	flag.StringVar(&o.tokenFile, "sandboxd-token-file", os.Getenv("SANDBOXD_TOKEN_FILE"), "file holding the sandboxd node api token")
@@ -259,6 +265,7 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 	opts := []nodeutil.NodeOpt{
 		nodeutil.WithClient(clientset),
 		nodeutil.AttachProviderRoutes(kubeletMux),
+		nodeutil.WithPodControllerConfigOverrides(o.podQueueLimits),
 		func(c *nodeutil.NodeConfig) error {
 			c.HTTPListenAddr = o.listenAddr
 			c.Handler = kubeletMux
@@ -285,6 +292,25 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 		c.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, ClientAuth: tls.NoClientCert, MinVersion: tls.VersionTLS12}
 		return nil
 	}), nil
+}
+
+func (o *options) podQueueLimits(c *node.PodControllerConfig) error {
+	qps := cmp.Or(float32(o.kubeQPS), rest.DefaultQPS)
+	burst := cmp.Or(o.kubeBurst, rest.DefaultBurst)
+	limiter := func() workqueue.TypedRateLimiter[any] {
+		backoff := workqueue.NewTypedItemExponentialFailureRateLimiter[any](podRetryBaseDelay, podRetryMaxDelay)
+		if qps < 0 {
+			return backoff
+		}
+		return workqueue.NewTypedMaxOfRateLimiter(
+			backoff,
+			&workqueue.TypedBucketRateLimiter[any]{Limiter: rate.NewLimiter(rate.Limit(qps), burst)},
+		)
+	}
+	c.SyncPodsFromKubernetesRateLimiter = limiter()
+	c.DeletePodsFromKubernetesRateLimiter = limiter()
+	c.SyncPodStatusFromProviderRateLimiter = limiter()
+	return nil
 }
 
 func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config, p *provider.Provider, sd *sandboxd.Client) error {

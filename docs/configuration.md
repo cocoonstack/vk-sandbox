@@ -17,8 +17,8 @@ environment.
 | `--node-cpu` | `VK_NODE_CPU` | `4000` | Advertised node CPU capacity (a scheduling budget only) |
 | `--node-memory` | `VK_NODE_MEMORY` | `8Ti` | Advertised node memory capacity |
 | `--node-pods` | `VK_NODE_PODS` | `2000` | Advertised node max pods |
-| `--kube-api-qps` | -- | `200` | client-go QPS for the Kubernetes clients (status pushes, delete authorization, inventory publish) |
-| `--kube-api-burst` | -- | `400` | client-go burst on top of `--kube-api-qps` |
+| `--kube-api-qps` | -- | `200` | client-go QPS for the Kubernetes clients (status pushes, delete authorization, inventory publish), and the rate of the pod create, delete and status queues |
+| `--kube-api-burst` | -- | `400` | client-go burst on top of `--kube-api-qps`, and the burst of the pod queues |
 | `--sandboxd-url` | `SANDBOXD_URL` | `http://127.0.0.1:7777` | sandboxd base URL |
 | `--sandboxd-advertise-addr` | `SANDBOXD_ADVERTISE_ADDR` | host:port of `--sandboxd-url` | `host:port` published in `NodeInventory` for claim routing |
 | `--sandboxd-token-file` | `SANDBOXD_TOKEN_FILE` | none | File holding the sandboxd node API token (trailing whitespace trimmed) |
