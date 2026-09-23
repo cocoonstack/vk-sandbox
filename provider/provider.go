@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -44,6 +45,8 @@ type Claim struct {
 	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
 	// Deadline is the lease end sandboxd returned; zero means unknown (an older table).
 	Deadline metav1.Time `json:"deadline,omitzero"`
+	// Owner is recorded when a delete preserves the claim; the owner re-check releases once it is gone.
+	Owner *metav1.OwnerReference `json:"owner,omitempty"`
 }
 
 func (c Claim) expired(now time.Time) bool {
@@ -62,7 +65,8 @@ type Config struct {
 }
 
 type stateFile struct {
-	Claims map[string]Claim `json:"claims"`
+	Claims    map[string]Claim `json:"claims"`
+	Releasing []Claim          `json:"releasing,omitempty"`
 }
 
 type podNotifier func(*corev1.Pod)
@@ -86,8 +90,14 @@ type Provider struct {
 	// quarantined holds loaded keys no listing has vouched for: releasable, not adoptable or Running.
 	quarantined map[string]struct{}
 
+	// releasing holds claims withdrawn from their key whose release has not succeeded yet.
+	releasing []Claim
+
 	// orphanVerdicts is the previous scan's verdict per sandbox id; the scan goroutine owns it.
 	orphanVerdicts map[string]string
+
+	// ownerRechecks is the backoff per preserved key; the re-check goroutine owns it.
+	ownerRechecks map[string]ownerRecheck
 
 	// saveMu orders snapshot-to-rename, or a concurrent create renames an older snapshot last.
 	saveMu sync.Mutex
@@ -105,6 +115,8 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		claims:      map[string]Claim{},
 		tentative:   map[string]struct{}{},
 		quarantined: map[string]struct{}{},
+
+		ownerRechecks: map[string]ownerRecheck{},
 	}
 	if err := p.loadState(); err != nil {
 		return nil, err
@@ -254,6 +266,7 @@ func (p *Provider) loadState() error {
 	if err := json.Unmarshal(b, &st); err != nil {
 		return fmt.Errorf("decode state %s: %w", p.statePath, err)
 	}
+	p.releasing = st.Releasing
 	if st.Claims == nil {
 		return nil
 	}
@@ -336,7 +349,7 @@ func (p *Provider) write(committing string) error {
 		return nil
 	}
 	p.mu.RLock()
-	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
+	st := stateFile{Claims: make(map[string]Claim, len(p.claims)), Releasing: slices.Clone(p.releasing)}
 	for k, c := range p.claims {
 		if _, pending := p.tentative[k]; !pending || k == committing {
 			st.Claims[k] = c

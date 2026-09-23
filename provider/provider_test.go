@@ -15,12 +15,14 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/go-logr/logr/funcr"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
@@ -273,6 +275,22 @@ func TestOrphanScanExternalClaimsAndLogDedup(t *testing.T) {
 	}
 	if logLines != 3 {
 		t.Fatalf("verdict log lines = %d, want 3 (one per verdict, not per cycle)", logLines)
+	}
+}
+
+func TestOrphanScanSkipsSandboxesQueuedForRelease(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{live: []sandboxd.SandboxSummary{{ID: "sb_leaving", ClaimRef: "ns1/gone"}}}
+	p := newTestProvider(t, sd, dynWith(t), "")
+	logLines := 0
+	p.log = funcr.New(func(string, string) { logLines++ }, funcr.Options{})
+	p.mu.Lock()
+	p.releasing = append(p.releasing, Claim{ID: "sb_leaving", Token: "t"})
+	p.mu.Unlock()
+
+	orphans, stale, ok := p.OrphanScan(ctx)
+	if !ok || len(orphans) != 0 || len(stale) != 0 || logLines != 0 {
+		t.Fatalf("a sandbox queued for release was judged: orphans=%v stale=%v ok=%v logs=%d", orphans, stale, ok, logLines)
 	}
 }
 
@@ -1281,6 +1299,292 @@ func TestTheWatchDoesNotTerminalizeAReplacementPod(t *testing.T) {
 	}
 }
 
+func TestAPreservedClaimIsReleasedOnceItsOwnerIsGone(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	c, ok := p.claimFor("ns1/sb-pod")
+	if !ok || c.Owner == nil || c.Owner.Name != "sb-owner" || c.Owner.UID != "owner-uid" {
+		t.Fatalf("a preserved claim must record its owner: %+v ok=%v", c, ok)
+	}
+
+	now := time.Now()
+	p.recheckOwners(ctx, now, time.Second)
+	if got := sd.releaseCount(); got != 0 {
+		t.Fatalf("the re-check released while the owner was alive; releases=%d", got)
+	}
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	p.recheckOwners(ctx, now, time.Second)
+	if got := sd.releaseCount(); got != 0 {
+		t.Fatalf("the re-check ran again inside its backoff; releases=%d", got)
+	}
+	p.recheckOwners(ctx, now.Add(time.Second), time.Second)
+	if got := sd.releaseCount(); got != 1 {
+		t.Fatalf("an owner confirmed gone must release; releases=%d", got)
+	}
+	if _, ok := p.heldClaimFor("ns1/sb-pod"); ok {
+		t.Fatal("the released claim must be dropped")
+	}
+	if len(p.ownerRechecks) != 0 || len(p.releasing) != 0 {
+		t.Fatalf("a released claim lingers: backoff=%v queue=%v", p.ownerRechecks, p.releasing)
+	}
+}
+
+func TestTheOwnerRecheckBacksOffWhileTheOwnerLives(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	dyn.ClearActions()
+
+	now := time.Now()
+	for _, offset := range []time.Duration{0, time.Second, 2 * time.Second, 3 * time.Second, 4 * time.Second, 7 * time.Second} {
+		p.recheckOwners(ctx, now.Add(offset), time.Second)
+	}
+	if got := len(dyn.Actions()); got != 4 {
+		t.Fatalf("owner reads = %d at 0s,1s,2s,3s,4s,7s with a 1s base, want 4 (0s, 1s, 3s, 7s)", got)
+	}
+	if got := sd.releaseCount(); got != 0 {
+		t.Fatalf("a living owner must keep the claim; releases=%d", got)
+	}
+	if c, ok := p.claimFor("ns1/sb-pod"); !ok || c.Owner == nil {
+		t.Fatalf("the preserved claim lost its owner: %+v ok=%v", c, ok)
+	}
+}
+
+func TestTheOwnerRecheckKeepsPreservingOnAnAmbiguous404(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	dyn.PrependReactor("get", "sandboxes", func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, k8serrors.NewNotFound(sandboxGVR.GroupResource(), "")
+	})
+
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	if got := sd.releaseCount(); got != 0 {
+		t.Fatalf("a 404 without Details.Name must not release; releases=%d", got)
+	}
+	if c, ok := p.heldClaimFor("ns1/sb-pod"); !ok || c.Owner == nil {
+		t.Fatalf("the claim must stay preserved with its owner: %+v ok=%v", c, ok)
+	}
+}
+
+func TestAdoptionCancelsTheOwnerRecheck(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, "")
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid")); err != nil {
+		t.Fatalf("CreatePod replacement: %v", err)
+	}
+	if c, ok := p.claimFor("ns1/sb-pod"); !ok || c.Owner != nil {
+		t.Fatalf("adoption must clear the recorded owner: %+v ok=%v", c, ok)
+	}
+
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	if got := sd.releaseCount(); got != 0 {
+		t.Fatalf("a claim held by a Pod must not be re-checked; releases=%d", got)
+	}
+}
+
+func TestARestartKeepsThePendingOwnerRecheck(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p1 := newTestProvider(t, sd, dyn, path)
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p1.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p1.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+
+	p2 := newTestProvider(t, sd, dyn, path)
+	c, ok := p2.claimFor("ns1/sb-pod")
+	if !ok || c.Owner == nil || c.Owner.Name != "sb-owner" {
+		t.Fatalf("the recorded owner did not survive the restart: %+v ok=%v", c, ok)
+	}
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	p2.recheckOwners(ctx, time.Now(), time.Second)
+	if got := sd.releaseCount(); got != 1 {
+		t.Fatalf("the restarted provider must finish the re-check; releases=%d", got)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "sb-pod") {
+		t.Fatalf("the released claim is still on disk: %s", b)
+	}
+}
+
+func TestAPodArrivingDuringTheReleaseClaimsFresh(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, "")
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p.claimFor("ns1/sb-pod")
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	sd.onRelease = func() {
+		sd.onRelease = nil
+		if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid-2")); err != nil {
+			t.Errorf("CreatePod during the release: %v", err)
+		}
+	}
+
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	c, ok := p.claimFor("ns1/sb-pod")
+	if !ok || c.ID == old.ID {
+		t.Fatalf("the replacement Pod adopted a sandbox that was being released: %+v ok=%v", c, ok)
+	}
+	if sd.claimCount() != 2 || sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("want a fresh claim and exactly the old release: claims=%d releases=%v", sd.claimCount(), sd.releases)
+	}
+	if cached, err := p.GetPod(ctx, "ns1", "sb-pod"); err != nil || cached == nil || cached.UID != "uid-2" {
+		t.Fatalf("the replacement Pod must survive the release: %v err=%v", cached, err)
+	}
+}
+
+func TestAFailedReleaseKeepsTheCredentialQueued(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, path)
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p.claimFor("ns1/sb-pod")
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	sd.releaseErr = errTestReleaseFailed
+
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	if sd.releaseCount() != 0 {
+		t.Fatal("a failing release was counted")
+	}
+	if _, ok := p.heldClaimFor("ns1/sb-pod"); ok {
+		t.Fatal("a claim on its way out must leave its key")
+	}
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid-2")); err != nil {
+		t.Fatalf("CreatePod replacement: %v", err)
+	}
+	fresh, ok := p.claimFor("ns1/sb-pod")
+	if !ok || fresh.ID == old.ID {
+		t.Fatalf("the replacement must claim fresh: %+v ok=%v", fresh, ok)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st stateFile
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Releasing) != 1 || st.Releasing[0].ID != old.ID || st.Releasing[0].Token != old.Token {
+		t.Fatalf("the unreleased credential is not on disk: %+v", st.Releasing)
+	}
+
+	sd.releaseErr = nil
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the queued release was not retried: %v", sd.releases)
+	}
+	if still, ok := p.claimFor("ns1/sb-pod"); !ok || still.ID != fresh.ID {
+		t.Fatalf("the retry disturbed the replacement's claim: %+v ok=%v", still, ok)
+	}
+	if len(p.releasing) != 0 {
+		t.Fatalf("queue not drained: %+v", p.releasing)
+	}
+}
+
+func TestARestartRetriesAQueuedRelease(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p1 := newTestProvider(t, sd, dyn, path)
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p1.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p1.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p1.claimFor("ns1/sb-pod")
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	sd.releaseErr = errTestReleaseFailed
+	p1.recheckOwners(ctx, time.Now(), time.Second)
+
+	sd.releaseErr = nil
+	p2 := newTestProvider(t, sd, dyn, path)
+	p2.recheckOwners(ctx, time.Now(), time.Second)
+	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the restarted provider did not finish the queued release: %v", sd.releases)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), old.ID) {
+		t.Fatalf("the released credential is still on disk: %s", b)
+	}
+}
+
 type listAfterHook struct {
 	onList func()
 }
@@ -1302,6 +1606,7 @@ type fakeSandboxd struct {
 	releaseErr error
 	lastSpec   sandboxd.ClaimSpec
 	deadline   time.Time
+	onRelease  func()
 }
 
 func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandboxd.ClaimResult, error) {
@@ -1318,6 +1623,9 @@ func (f *fakeSandboxd) Claim(_ context.Context, spec sandboxd.ClaimSpec) (sandbo
 }
 
 func (f *fakeSandboxd) Release(_ context.Context, id, _ string) error {
+	if f.onRelease != nil {
+		f.onRelease()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.releaseErr != nil {

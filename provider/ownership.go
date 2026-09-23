@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 
-	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -52,11 +51,10 @@ func pluralResource(lower string) string {
 	}
 }
 
-// destroyAuthorized releases for a bare pod, or when the controller owner is
-// confirmed gone by name, in teardown, expired, or replaced under a new UID.
-// A 404 without Details.Name and any query error preserve.
-func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.Pod) (authVerdict, string) {
-	ref := metav1.GetControllerOf(pod)
+// destroyAuthorized releases for a bare pod (nil ref), or when the controller
+// owner is confirmed gone by name, in teardown, expired, or replaced under a
+// new UID. A 404 without Details.Name and any query error preserve.
+func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, namespace string, ref *metav1.OwnerReference) (authVerdict, string) {
 	if ref == nil {
 		return authRelease, "bare pod: pod deletion is the owner teardown"
 	}
@@ -67,7 +65,7 @@ func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.P
 	if !ok {
 		return authPreserve, "owner GVR unresolvable for kind " + ref.Kind
 	}
-	obj, err := dyn.Resource(gvr).Namespace(pod.Namespace).Get(ctx, ref.Name, metav1.GetOptions{})
+	obj, err := dyn.Resource(gvr).Namespace(namespace).Get(ctx, ref.Name, metav1.GetOptions{})
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			if n := notFoundName(err); n == ref.Name {

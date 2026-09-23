@@ -26,7 +26,9 @@ pinned by intent tests:
    structured NotFound naming it in `Details.Name`), replaced by another UID,
    **in teardown** (deletionTimestamp set), or **expired** (Ready reason
    `SandboxExpired`). Otherwise the claim is preserved, and a
-   same-name replacement pod **adopts it in place** — no second claim, same VM. See
+   same-name replacement pod **adopts it in place** — no second claim, same VM.
+   A preserved claim's owner is re-checked with backoff, so a namespace
+   deletion that removes Pod and owner independently still releases the VM. See
    [delete authorization](#delete-authorization-pod-deletion-is-not-vm-authority).
 2. **No naive kind pluralization.** The owner GVR is derived with the es/ies
    rules (`Sandbox`→`sandboxes`); an endpoint-level 404 *without*
@@ -114,6 +116,21 @@ Preserve drops only the Pod entry; the claim -- and with it the release token
 stale-UID guard runs first: a request carrying a previous Pod generation's UID
 is ignored outright.
 
+Preserve also records the controller owner with the claim. Deleting a namespace
+deletes its Pods and their owning `Sandbox` objects independently, so about half
+the Pods reach `DeletePod` while their owner is still alive; nothing would look
+at those claims again until the lease ends. A re-check loop therefore asks about
+the recorded owner of every pod-less claim, first after `ownerRecheckInterval`
+(10s) and then with doubling backoff up to ten minutes, applying the verdict
+table above: once the owner is confirmed gone, in teardown, expired or replaced,
+the sandbox is released and the claim dropped; while it lives or cannot be
+verified, the claim stays. A replacement Pod adopting the claim ends the re-check.
+A claim the re-check releases is first withdrawn from its key into a persisted
+release queue, so a replacement Pod arriving meanwhile claims fresh instead of
+adopting a sandbox on its way out; a release that fails stays queued with its
+credential and is retried every tick, across restarts, until sandboxd confirms
+it gone. The recorded owner survives a restart with the claim.
+
 The owner GVR is derived from `apiVersion` + `kind` with the English plural
 rules (`Sandbox` -> `sandboxes`, `policy` -> `policies`), never a naive
 `+ "s"`. Even so, a wrong guess is safe: an endpoint-level 404 carries no
@@ -125,8 +142,8 @@ retries with the credential intact.
 
 ## Claims table persistence
 
-The claims table (`{id, token, address, podUID, claimedAt, deadline}` per pod
-key) is written to `--state-path` as JSON with a tmp-file + rename, mode
+The claims table (`{id, token, address, podUID, claimedAt, deadline, owner}` per
+pod key, plus the `releasing` list of withdrawn claims awaiting release) is written to `--state-path` as JSON with a tmp-file + rename, mode
 `0600`, directory mode `0700`. It is reloaded at startup, so a provider
 restart keeps the authority to tear down exactly what it delivered. The
 binary requires the flag; only the in-process constructor accepts an empty

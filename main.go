@@ -55,6 +55,9 @@ const (
 	// leaseWatchInterval bounds how stale a reaped sandbox's Running status stays.
 	leaseWatchInterval = 30 * time.Second
 
+	// ownerRecheckInterval is the first delay before a preserved claim's owner is read again.
+	ownerRecheckInterval = 10 * time.Second
+
 	// Per-pod retry backoff of the pod queues, workqueue's own defaults.
 	podRetryBaseDelay = 5 * time.Millisecond
 	podRetryMaxDelay  = 1000 * time.Second
@@ -189,6 +192,7 @@ func (o *options) run() error {
 	}
 	go p.RunClaimVerification(ctx, claimVerifyInterval)
 	go p.RunLeaseWatch(ctx, leaseWatchInterval)
+	go p.RunOwnerRecheck(ctx, ownerRecheckInterval)
 	if o.publishInventory {
 		if err := o.startInventoryPublisher(ctx, cfg, clientset.CoreV1().Nodes(), p, sdClient); err != nil {
 			return err

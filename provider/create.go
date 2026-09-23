@@ -137,6 +137,7 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 		return Claim{}, false
 	}
 	c.PodUID = string(pod.UID)
+	c.Owner = nil
 	if c.ClaimedAt.IsZero() {
 		c.ClaimedAt = metav1.Now()
 	}
@@ -237,6 +238,7 @@ func (p *Provider) withdrawClaim(key, id string) {
 		delete(p.pods, key)
 	}
 	delete(p.tentative, key)
+	delete(p.quarantined, key)
 	p.mu.Unlock()
 }
 
