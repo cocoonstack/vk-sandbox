@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -64,7 +65,8 @@ type Config struct {
 }
 
 type stateFile struct {
-	Claims map[string]Claim `json:"claims"`
+	Claims    map[string]Claim `json:"claims"`
+	Releasing []Claim          `json:"releasing,omitempty"`
 }
 
 type podNotifier func(*corev1.Pod)
@@ -88,8 +90,8 @@ type Provider struct {
 	// quarantined holds loaded keys no listing has vouched for: releasable, not adoptable or Running.
 	quarantined map[string]struct{}
 
-	// releasing holds pod-less keys the owner re-check is releasing; adoption skips them.
-	releasing map[string]struct{}
+	// releasing holds claims withdrawn from their key whose release has not succeeded yet.
+	releasing []Claim
 
 	// orphanVerdicts is the previous scan's verdict per sandbox id; the scan goroutine owns it.
 	orphanVerdicts map[string]string
@@ -113,7 +115,6 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		claims:      map[string]Claim{},
 		tentative:   map[string]struct{}{},
 		quarantined: map[string]struct{}{},
-		releasing:   map[string]struct{}{},
 
 		ownerRechecks: map[string]ownerRecheck{},
 	}
@@ -212,12 +213,11 @@ func (p *Provider) notify(pod *corev1.Pod) {
 	}
 }
 
-// settled means neither tentative, quarantined nor releasing; callers hold mu.
+// settled means neither tentative nor quarantined; callers hold mu.
 func (p *Provider) settled(key string) bool {
 	_, pending := p.tentative[key]
 	_, unverified := p.quarantined[key]
-	_, leaving := p.releasing[key]
-	return !pending && !unverified && !leaving
+	return !pending && !unverified
 }
 
 // claimFor returns the settled claim for key; a tentative or quarantined one is withheld.
@@ -266,6 +266,7 @@ func (p *Provider) loadState() error {
 	if err := json.Unmarshal(b, &st); err != nil {
 		return fmt.Errorf("decode state %s: %w", p.statePath, err)
 	}
+	p.releasing = st.Releasing
 	if st.Claims == nil {
 		return nil
 	}
@@ -348,7 +349,7 @@ func (p *Provider) write(committing string) error {
 		return nil
 	}
 	p.mu.RLock()
-	st := stateFile{Claims: make(map[string]Claim, len(p.claims))}
+	st := stateFile{Claims: make(map[string]Claim, len(p.claims)), Releasing: slices.Clone(p.releasing)}
 	for k, c := range p.claims {
 		if _, pending := p.tentative[k]; !pending || k == committing {
 			st.Claims[k] = c

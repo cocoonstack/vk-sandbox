@@ -124,9 +124,12 @@ the recorded owner of every pod-less claim, first after `ownerRecheckInterval`
 (10s) and then with doubling backoff up to ten minutes, applying the verdict
 table above: once the owner is confirmed gone, in teardown, expired or replaced,
 the sandbox is released and the claim dropped; while it lives or cannot be
-verified, the claim stays. A replacement Pod adopting the claim ends the re-check,
-a claim mid-release cannot be adopted, and the recorded owner survives a restart
-with the claim.
+verified, the claim stays. A replacement Pod adopting the claim ends the re-check.
+A claim the re-check releases is first withdrawn from its key into a persisted
+release queue, so a replacement Pod arriving meanwhile claims fresh instead of
+adopting a sandbox on its way out; a release that fails stays queued with its
+credential and is retried every tick, across restarts, until sandboxd confirms
+it gone. The recorded owner survives a restart with the claim.
 
 The owner GVR is derived from `apiVersion` + `kind` with the English plural
 rules (`Sandbox` -> `sandboxes`, `policy` -> `policies`), never a naive
@@ -140,7 +143,7 @@ retries with the credential intact.
 ## Claims table persistence
 
 The claims table (`{id, token, address, podUID, claimedAt, deadline, owner}` per
-pod key) is written to `--state-path` as JSON with a tmp-file + rename, mode
+pod key, plus the `releasing` list of withdrawn claims awaiting release) is written to `--state-path` as JSON with a tmp-file + rename, mode
 `0600`, directory mode `0700`. It is reloaded at startup, so a provider
 restart keeps the authority to tear down exactly what it delivered. The
 binary requires the flag; only the in-process constructor accepts an empty

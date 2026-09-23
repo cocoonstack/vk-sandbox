@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -23,7 +24,7 @@ func (p *Provider) RunOwnerRecheck(ctx context.Context, interval time.Duration) 
 	})
 }
 
-// recheckOwners asks about each due preserved claim's owner with the delete verdicts, backing off from base.
+// recheckOwners asks about each due preserved claim's owner with the delete verdicts, backing off from base, then drains the release queue.
 func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.Duration) {
 	p.mu.RLock()
 	preserved := map[string]Claim{}
@@ -35,7 +36,7 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 	p.mu.RUnlock()
 	maps.DeleteFunc(p.ownerRechecks, func(key string, _ ownerRecheck) bool { _, ok := preserved[key]; return !ok })
 
-	releases := 0
+	changed := false
 	for key, c := range preserved {
 		r, seen := p.ownerRechecks[key]
 		if seen && now.Before(r.at) {
@@ -43,44 +44,56 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 		}
 		namespace, _, _ := strings.Cut(key, "/")
 		verdict, reason := destroyAuthorized(ctx, p.dyn, namespace, c.Owner)
-		if verdict != authRelease {
-			p.log.V(1).Info("preserved sandbox stays", "pod", key, "claim", c.ID, "reason", reason)
-		} else if released, err := p.releasePreserved(ctx, key, c); err != nil {
-			p.log.Error(err, "release of a preserved sandbox failed", "pod", key, "claim", c.ID)
-		} else {
-			if released {
-				p.log.Info("released a preserved sandbox", "pod", key, "claim", c.ID, "reason", reason)
-				releases++
+		if verdict == authRelease {
+			if p.withdrawForRelease(key, c) {
+				p.log.Info("releasing a preserved sandbox", "pod", key, "claim", c.ID, "reason", reason)
+				changed = true
 			}
 			delete(p.ownerRechecks, key)
 			continue
 		}
+		p.log.V(1).Info("preserved sandbox stays", "pod", key, "claim", c.ID, "reason", reason)
 		delay := base
 		if seen {
 			delay = min(2*r.delay, ownerRecheckMaxDelay)
 		}
 		p.ownerRechecks[key] = ownerRecheck{at: now.Add(delay), delay: delay}
 	}
-	if releases > 0 {
+	if p.drainReleases(ctx) || changed {
 		p.saveState()
 	}
 }
 
-// releasePreserved releases a pod-less claim unless a Pod adopted it since the verdict; adoption is refused while the release is in flight.
-func (p *Provider) releasePreserved(ctx context.Context, key string, c Claim) (bool, error) {
+// withdrawForRelease moves a pod-less claim off its key into the release queue, so a replacement Pod claims fresh instead of adopting a sandbox on its way out.
+func (p *Provider) withdrawForRelease(key string, c Claim) bool {
 	p.mu.Lock()
+	defer p.mu.Unlock()
 	cur, held := p.claims[key]
 	if !held || cur.ID != c.ID || p.pods[key] != nil {
-		p.mu.Unlock()
-		return false, nil
+		return false
 	}
-	p.releasing[key] = struct{}{}
-	p.mu.Unlock()
-	if err := p.releaseClaim(ctx, key, c); err != nil {
+	delete(p.claims, key)
+	delete(p.quarantined, key)
+	p.releasing = append(p.releasing, c)
+	return true
+}
+
+// drainReleases releases every queued claim it can; a failed release stays queued for the next tick.
+func (p *Provider) drainReleases(ctx context.Context) bool {
+	p.mu.RLock()
+	queued := slices.Clone(p.releasing)
+	p.mu.RUnlock()
+	released := false
+	for _, c := range queued {
+		if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
+			p.log.Error(err, "release of a preserved sandbox failed", "claim", c.ID)
+			continue
+		}
 		p.mu.Lock()
-		delete(p.releasing, key)
+		p.releasing = slices.DeleteFunc(p.releasing, func(q Claim) bool { return q.ID == c.ID })
 		p.mu.Unlock()
-		return false, err
+		p.log.Info("released a preserved sandbox", "claim", c.ID)
+		released = true
 	}
-	return true, nil
+	return released
 }

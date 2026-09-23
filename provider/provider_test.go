@@ -1319,8 +1319,8 @@ func TestAPreservedClaimIsReleasedOnceItsOwnerIsGone(t *testing.T) {
 	if _, ok := p.heldClaimFor("ns1/sb-pod"); ok {
 		t.Fatal("the released claim must be dropped")
 	}
-	if len(p.ownerRechecks) != 0 {
-		t.Fatalf("backoff table keeps a released key: %v", p.ownerRechecks)
+	if len(p.ownerRechecks) != 0 || len(p.releasing) != 0 {
+		t.Fatalf("a released claim lingers: backoff=%v queue=%v", p.ownerRechecks, p.releasing)
 	}
 }
 
@@ -1440,7 +1440,7 @@ func TestARestartKeepsThePendingOwnerRecheck(t *testing.T) {
 	}
 }
 
-func TestTheOwnerRecheckRefusesAdoptionWhileReleasing(t *testing.T) {
+func TestAPodArrivingDuringTheReleaseClaimsFresh(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
 	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
@@ -1473,6 +1473,99 @@ func TestTheOwnerRecheckRefusesAdoptionWhileReleasing(t *testing.T) {
 	}
 	if cached, err := p.GetPod(ctx, "ns1", "sb-pod"); err != nil || cached == nil || cached.UID != "uid-2" {
 		t.Fatalf("the replacement Pod must survive the release: %v err=%v", cached, err)
+	}
+}
+
+func TestAFailedReleaseKeepsTheCredentialQueued(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p := newTestProvider(t, sd, dyn, path)
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p.claimFor("ns1/sb-pod")
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	sd.releaseErr = errTestReleaseFailed
+
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	if sd.releaseCount() != 0 {
+		t.Fatal("a failing release was counted")
+	}
+	if _, ok := p.heldClaimFor("ns1/sb-pod"); ok {
+		t.Fatal("a claim on its way out must leave its key")
+	}
+	if err := p.CreatePod(ctx, sandboxPod("ns1", "sb-pod", "uid-2", "sb-owner", "owner-uid-2")); err != nil {
+		t.Fatalf("CreatePod replacement: %v", err)
+	}
+	fresh, ok := p.claimFor("ns1/sb-pod")
+	if !ok || fresh.ID == old.ID {
+		t.Fatalf("the replacement must claim fresh: %+v ok=%v", fresh, ok)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st stateFile
+	if err := json.Unmarshal(b, &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Releasing) != 1 || st.Releasing[0].ID != old.ID || st.Releasing[0].Token != old.Token {
+		t.Fatalf("the unreleased credential is not on disk: %+v", st.Releasing)
+	}
+
+	sd.releaseErr = nil
+	p.recheckOwners(ctx, time.Now(), time.Second)
+	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the queued release was not retried: %v", sd.releases)
+	}
+	if still, ok := p.claimFor("ns1/sb-pod"); !ok || still.ID != fresh.ID {
+		t.Fatalf("the retry disturbed the replacement's claim: %+v ok=%v", still, ok)
+	}
+	if len(p.releasing) != 0 {
+		t.Fatalf("queue not drained: %+v", p.releasing)
+	}
+}
+
+func TestARestartRetriesAQueuedRelease(t *testing.T) {
+	ctx := t.Context()
+	path := t.TempDir() + "/claims.json"
+	sd := &fakeSandboxd{}
+	dyn := dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid", false))
+	p1 := newTestProvider(t, sd, dyn, path)
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p1.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p1.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	old, _ := p1.claimFor("ns1/sb-pod")
+	if err := dyn.Tracker().Delete(sandboxGVR, "ns1", "sb-owner"); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	sd.releaseErr = errTestReleaseFailed
+	p1.recheckOwners(ctx, time.Now(), time.Second)
+
+	sd.releaseErr = nil
+	p2 := newTestProvider(t, sd, dyn, path)
+	p2.recheckOwners(ctx, time.Now(), time.Second)
+	if sd.releaseCount() != 1 || sd.releases[0] != old.ID {
+		t.Fatalf("the restarted provider did not finish the queued release: %v", sd.releases)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), old.ID) {
+		t.Fatalf("the released credential is still on disk: %s", b)
 	}
 }
 

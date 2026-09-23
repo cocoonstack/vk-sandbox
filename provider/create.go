@@ -239,7 +239,6 @@ func (p *Provider) withdrawClaim(key, id string) {
 	}
 	delete(p.tentative, key)
 	delete(p.quarantined, key)
-	delete(p.releasing, key)
 	p.mu.Unlock()
 }
 
