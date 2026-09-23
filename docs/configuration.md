@@ -27,6 +27,7 @@ environment.
 | `--publish-inventory` | -- | `false` | Server-side-apply this node's `NodeInventory` for the L3 aggregation layer |
 | `--publish-interval` | -- | `30s` | `NodeInventory` publish cadence |
 | `--node-labels` | -- | `sandbox.cocoonstack.io/runtime=sandboxd` | Comma-separated extra node labels, `key=value` |
+| `--disable-pod-events` | -- | `false` | Drop the pod controller's Normal events (one per pod create, update and delete); warnings still reach the apiserver |
 | `--version` | -- | `false` | Print the build version and exit |
 
 `KUBECONFIG` is read only when in-cluster configuration is unavailable: the
