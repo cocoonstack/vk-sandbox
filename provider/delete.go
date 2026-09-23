@@ -34,6 +34,7 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	if err := p.releaseClaim(ctx, key, c); err != nil {
 		return fmt.Errorf("release sandbox %s for %s: %w", c.ID, key, err)
 	}
+	p.saveState()
 	return nil
 }
 
@@ -60,6 +61,5 @@ func (p *Provider) releaseClaim(ctx context.Context, key string, c Claim) error 
 		return err
 	}
 	p.withdrawClaim(key, c.ID)
-	p.saveState()
 	return nil
 }

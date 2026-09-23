@@ -35,6 +35,7 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 	p.mu.RUnlock()
 	maps.DeleteFunc(p.ownerRechecks, func(key string, _ ownerRecheck) bool { _, ok := preserved[key]; return !ok })
 
+	releases := 0
 	for key, c := range preserved {
 		r, seen := p.ownerRechecks[key]
 		if seen && now.Before(r.at) {
@@ -49,6 +50,7 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 		} else {
 			if released {
 				p.log.Info("released a preserved sandbox", "pod", key, "claim", c.ID, "reason", reason)
+				releases++
 			}
 			delete(p.ownerRechecks, key)
 			continue
@@ -58,6 +60,9 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 			delay = min(2*r.delay, ownerRecheckMaxDelay)
 		}
 		p.ownerRechecks[key] = ownerRecheck{at: now.Add(delay), delay: delay}
+	}
+	if releases > 0 {
+		p.saveState()
 	}
 }
 
