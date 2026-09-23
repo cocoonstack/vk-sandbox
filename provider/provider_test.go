@@ -153,6 +153,23 @@ func TestDeleteReleasesWhenTheOwnerExpired(t *testing.T) {
 	}
 }
 
+func TestDeleteReleasesWhenTheOwnerWasRecreated(t *testing.T) {
+	ctx := t.Context()
+	sd := &fakeSandboxd{}
+	p := newTestProvider(t, sd, dynWith(t, ownerSandbox("ns1", "sb-owner", "owner-uid-2", false)), "")
+
+	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+	if err := p.CreatePod(ctx, pod); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	if err := p.DeletePod(ctx, pod); err != nil {
+		t.Fatalf("DeletePod: %v", err)
+	}
+	if got := sd.releaseCount(); got != 1 {
+		t.Fatalf("an owner under a new UID means the referenced generation is gone; releases=%d", got)
+	}
+}
+
 func TestDeletePreservesWhenOwnerUnverifiable(t *testing.T) {
 	ctx := t.Context()
 	sd := &fakeSandboxd{}
@@ -346,6 +363,27 @@ func TestRuntimeMismatchRejected(t *testing.T) {
 	}
 	if sd.claimCount() != 0 {
 		t.Fatalf("mismatched pod must not claim; claims=%d", sd.claimCount())
+	}
+}
+
+func TestInvalidClaimAnnotationsFailTheCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*corev1.Pod)
+	}{
+		{"missing template", func(pod *corev1.Pod) { delete(pod.Annotations, AnnTemplate) }},
+		{"non-integer ttl", func(pod *corev1.Pod) { pod.Annotations[AnnTTLSeconds] = "1h" }},
+		{"negative ttl", func(pod *corev1.Pod) { pod.Annotations[AnnTTLSeconds] = "-5" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sd := &fakeSandboxd{}
+			p := newTestProvider(t, sd, dynWith(t), "")
+			pod := sandboxPod("ns1", "sb-pod", "uid-1", "", "")
+			tc.mutate(pod)
+			if err := p.CreatePod(t.Context(), pod); err == nil || sd.claimCount() != 0 {
+				t.Fatalf("CreatePod = %v with %d claims, want a failed create and no claim", err, sd.claimCount())
+			}
+		})
 	}
 }
 
@@ -586,6 +624,9 @@ func TestCreatePodReturnsTheSandboxWhenTheClaimCannotBePersisted(t *testing.T) {
 	}
 	if _, ok := p.claimFor("ns/p"); ok {
 		t.Error("a returned sandbox must not stay in the claims table")
+	}
+	if cached, _ := p.GetPod(t.Context(), "ns", "p"); cached != nil {
+		t.Error("a Pod whose sandbox was returned stays cached, so virtual-kubelet calls UpdatePod instead of retrying CreatePod")
 	}
 }
 
@@ -1294,6 +1335,27 @@ func TestAStillListedExpiredClaimIsAdoptedNotReplaced(t *testing.T) {
 	c, ok := p.claimFor("ns/p")
 	if !ok || c.ID != "sb_archived" || !c.Deadline.IsZero() {
 		t.Fatalf("claim = %+v ok=%v, want the archived row adopted with its keep-forever lease", c, ok)
+	}
+}
+
+func TestAnExpiredClaimIsNeitherAdoptedNorReplacedWhileTheNodeCannotBeListed(t *testing.T) {
+	sd := &fakeSandboxd{listErr: errTestReleaseFailed}
+	p, err := New(t.Context(), Config{Client: sd, Lister: sd, Logger: logr.Discard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pushed bool
+	p.NotifyPods(t.Context(), func(*corev1.Pod) { pushed = true })
+	p.mu.Lock()
+	p.claims["ns/p"] = Claim{ID: "sb_expired", Token: "t", ClaimedAt: metav1.Now(), Deadline: metav1.NewTime(time.Now().Add(-time.Hour))}
+	p.mu.Unlock()
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u", "", "")); err == nil {
+		t.Fatal("a past-deadline claim was settled without the node's listing")
+	}
+	c, ok := p.heldClaimFor("ns/p")
+	if pushed || sd.claimCount() != 0 || !ok || c.ID != "sb_expired" {
+		t.Fatalf("an unlistable node must defer: pushed=%v claims=%d row=%+v ok=%v", pushed, sd.claimCount(), c, ok)
 	}
 }
 
