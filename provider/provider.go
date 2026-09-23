@@ -44,6 +44,8 @@ type Claim struct {
 	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
 	// Deadline is the lease end sandboxd returned; zero means unknown (an older table).
 	Deadline metav1.Time `json:"deadline,omitzero"`
+	// Owner is recorded when a delete preserves the claim; the owner re-check releases once it is gone.
+	Owner *metav1.OwnerReference `json:"owner,omitempty"`
 }
 
 func (c Claim) expired(now time.Time) bool {
@@ -86,8 +88,14 @@ type Provider struct {
 	// quarantined holds loaded keys no listing has vouched for: releasable, not adoptable or Running.
 	quarantined map[string]struct{}
 
+	// releasing holds pod-less keys the owner re-check is releasing; adoption skips them.
+	releasing map[string]struct{}
+
 	// orphanVerdicts is the previous scan's verdict per sandbox id; the scan goroutine owns it.
 	orphanVerdicts map[string]string
+
+	// ownerRechecks is the backoff per preserved key; the re-check goroutine owns it.
+	ownerRechecks map[string]ownerRecheck
 
 	// saveMu orders snapshot-to-rename, or a concurrent create renames an older snapshot last.
 	saveMu sync.Mutex
@@ -105,6 +113,9 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		claims:      map[string]Claim{},
 		tentative:   map[string]struct{}{},
 		quarantined: map[string]struct{}{},
+		releasing:   map[string]struct{}{},
+
+		ownerRechecks: map[string]ownerRecheck{},
 	}
 	if err := p.loadState(); err != nil {
 		return nil, err
@@ -201,11 +212,12 @@ func (p *Provider) notify(pod *corev1.Pod) {
 	}
 }
 
-// settled means neither tentative nor quarantined; callers hold mu.
+// settled means neither tentative, quarantined nor releasing; callers hold mu.
 func (p *Provider) settled(key string) bool {
 	_, pending := p.tentative[key]
 	_, unverified := p.quarantined[key]
-	return !pending && !unverified
+	_, leaving := p.releasing[key]
+	return !pending && !unverified && !leaving
 }
 
 // claimFor returns the settled claim for key; a tentative or quarantined one is withheld.
