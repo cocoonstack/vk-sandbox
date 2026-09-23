@@ -127,29 +127,39 @@ func TestDeleteReleasesOnOwnerTeardown(t *testing.T) {
 	}
 }
 
-func TestDeleteReleasesWhenTheOwnerExpired(t *testing.T) {
-	ctx := t.Context()
-	sd := &fakeSandboxd{}
-	owner := ownerSandbox("ns1", "sb-owner", "owner-uid", false)
-	if err := unstructured.SetNestedSlice(owner.Object, []any{map[string]any{
-		"type": "Ready", "status": "False", "reason": "SandboxExpired",
-	}}, "status", "conditions"); err != nil {
-		t.Fatalf("set conditions: %v", err)
-	}
-	p := newTestProvider(t, sd, dynWith(t, owner), "")
+func TestOnlyAnExpiredOwnerReadyReasonAuthorizesTheRelease(t *testing.T) {
+	for _, tc := range []struct {
+		status, reason string
+		releases       int
+	}{
+		{"False", "SandboxExpired", 1},
+		{"True", "DependenciesReady", 0},
+		{"False", "DependenciesNotReady", 0},
+		{"False", "SandboxSuspended", 0},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			ctx := t.Context()
+			sd := &fakeSandboxd{}
+			owner := ownerSandbox("ns1", "sb-owner", "owner-uid", false)
+			if err := unstructured.SetNestedSlice(owner.Object, []any{map[string]any{
+				"type": "Ready", "status": tc.status, "reason": tc.reason,
+			}}, "status", "conditions"); err != nil {
+				t.Fatalf("set conditions: %v", err)
+			}
+			p := newTestProvider(t, sd, dynWith(t, owner), "")
 
-	pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
-	if err := p.CreatePod(ctx, pod); err != nil {
-		t.Fatalf("CreatePod: %v", err)
-	}
-	if err := p.DeletePod(ctx, pod); err != nil {
-		t.Fatalf("DeletePod: %v", err)
-	}
-	if got := sd.releaseCount(); got != 1 {
-		t.Fatalf("an expired owner keeps its CR under Retain, so its pod deletion is the teardown; releases=%d", got)
-	}
-	if _, ok := p.claimFor("ns1/sb-pod"); ok {
-		t.Fatal("claim must be dropped after authorized release")
+			pod := sandboxPod("ns1", "sb-pod", "uid-1", "sb-owner", "owner-uid")
+			if err := p.CreatePod(ctx, pod); err != nil {
+				t.Fatalf("CreatePod: %v", err)
+			}
+			if err := p.DeletePod(ctx, pod); err != nil {
+				t.Fatalf("DeletePod: %v", err)
+			}
+			_, kept := p.claimFor("ns1/sb-pod")
+			if got := sd.releaseCount(); got != tc.releases || kept != (tc.releases == 0) {
+				t.Fatalf("owner Ready=%s/%s: releases=%d claim kept=%v, want %d releases", tc.status, tc.reason, got, kept, tc.releases)
+			}
+		})
 	}
 }
 
