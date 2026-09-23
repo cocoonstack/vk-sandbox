@@ -1078,6 +1078,33 @@ func TestClaimCarriesItsPodKey(t *testing.T) {
 	}
 }
 
+func TestAClaimIsPublishedReadyAtTheHostOfItsOwnerAddress(t *testing.T) {
+	sd := &fakeSandboxd{}
+	p := newTestProvider(t, sd, dynWith(t), "")
+	var notified *corev1.Pod
+	p.NotifyPods(t.Context(), func(pod *corev1.Pod) { notified = pod })
+
+	if err := p.CreatePod(t.Context(), sandboxPod("ns1", "sb-pod", "uid-1", "", "")); err != nil {
+		t.Fatalf("CreatePod: %v", err)
+	}
+	c, ok := p.claimFor("ns1/sb-pod")
+	if !ok || notified == nil {
+		t.Fatalf("the claim was not published: claim=%+v ok=%v pod=%v", c, ok, notified)
+	}
+	st := notified.Status
+	ready := slices.ContainsFunc(st.Conditions, func(cond corev1.PodCondition) bool {
+		return cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue
+	})
+	if st.PodIP != "10.99.0.5" || !slices.Equal(st.PodIPs, []corev1.PodIP{{IP: "10.99.0.5"}}) || st.HostIP != "10.99.0.5" || !ready {
+		t.Fatalf("the Running status must carry a Ready condition and the owner_addr host as Pod IP: podIP=%q podIPs=%v hostIP=%q conditions=%v",
+			st.PodIP, st.PodIPs, st.HostIP, st.Conditions)
+	}
+	if len(st.ContainerStatuses) != 1 || !st.ContainerStatuses[0].Ready || st.ContainerStatuses[0].State.Running == nil ||
+		st.ContainerStatuses[0].ImageID != "sandboxd://"+c.ID {
+		t.Fatalf("want one ready, running container backed by %s: %+v", c.ID, st.ContainerStatuses)
+	}
+}
+
 func TestAdoptionDoesNotResurrectARowVerificationRemoved(t *testing.T) {
 	sd := &fakeSandboxd{}
 	p, err := New(t.Context(), Config{Client: sd, Logger: logr.Discard()})
