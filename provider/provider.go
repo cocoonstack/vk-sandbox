@@ -22,7 +22,6 @@ import (
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// undoReleaseTimeout bounds a compensating release whose caller context may already be canceled.
 const undoReleaseTimeout = 10 * time.Second
 
 // SandboxdClient is the sandboxd surface the claim path drives; *sandboxd.Client satisfies it and Lister.
