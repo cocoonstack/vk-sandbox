@@ -2,24 +2,44 @@
 
 A sandbox Pod reaches this provider only if the scheduler binds it to the
 virtual node, and the provider serves it only if the Pod carries the right
-annotations. Both halves are set by sandbox-operator's runtime mutator; this
-page documents the contract so it can also be driven by hand.
+annotations. Both halves are written by the SandboxTemplate author; the
+agent-sandbox controller copies the pod template into the Pod verbatim.
 
 ## Routing a Pod to the virtual node
 
-sandbox-operator's `podruntime` mutator runs when a `Sandbox` selects the
-sandboxd runtime (`sandbox.cocoonstack.io/runtime: sandboxd`, or the
-operator's default runtime mode). It:
+The pod template of a `SandboxTemplate` (or a bare `Sandbox`) carries:
 
-- adds `nodeSelector: sandbox.cocoonstack.io/runtime=sandboxd`, the label
+- `nodeSelector: sandbox.cocoonstack.io/runtime=sandboxd`, the label
   vk-sandbox advertises by default (`--node-labels`);
-- adds a toleration for `virtual-kubelet.io/provider` with operator `Exists`
+- a toleration for `virtual-kubelet.io/provider` with operator `Exists`
   and effect `NoSchedule`, which covers both this node's taint and a
   co-located vk-cocoon node's;
-- defaults the claim template annotation to the first container image when it
-  is unset;
-- rejects the Pod if `spec.nodeName` is pinned or the node selector already
-  disagrees -- a misrouted sandbox is a failure, not a silent fallback.
+- the annotations below; `template` is the claim axis and has no default.
+
+```yaml
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata: {name: sandboxd, namespace: default}
+spec:
+  podTemplate:
+    metadata:
+      annotations:
+        sandbox.cocoonstack.io/runtime: sandboxd
+        sandbox.cocoonstack.io/template: ghcr.io/cocoonstack/sandbox/rt:24.04
+        sandbox.cocoonstack.io/net: none
+        sandbox.cocoonstack.io/size: small
+    spec:
+      nodeSelector: {sandbox.cocoonstack.io/runtime: sandboxd}
+      tolerations:
+      - {key: virtual-kubelet.io/provider, operator: Exists, effect: NoSchedule}
+      containers:
+      - name: agent
+        image: ghcr.io/cocoonstack/sandbox/rt:24.04
+```
+
+A pinned `spec.nodeName` or a disagreeing node selector is not corrected: the
+scheduler binds the Pod elsewhere, and a Pod that does arrive here with the
+wrong annotations fails `CreatePod` rather than falling back silently.
 
 A Pod that arrives here with `sandbox.cocoonstack.io/runtime` set to anything
 other than `sandboxd` is rejected by `CreatePod`: this node serves exactly one
@@ -34,8 +54,8 @@ verbatim, so one contract spans the L2 claim gateway and this provider.
 |---|---|---|
 | `sandbox.cocoonstack.io/runtime` | in | Must be `sandboxd` (absent is treated as `sandboxd`) |
 | `sandbox.cocoonstack.io/template` | in | sandboxd template axis. **Required** -- `CreatePod` fails without it |
-| `sandbox.cocoonstack.io/net` | in | Claim network axis; the operator's mutator sets it from the pod template (default `none`), empty means the sandboxd default |
-| `sandbox.cocoonstack.io/size` | in | Claim VM size axis; the operator's mutator derives it from the first container's requests (`small`/`medium`/`large`), empty means the sandboxd default |
+| `sandbox.cocoonstack.io/net` | in | Claim network axis (`none` or an egress lane); empty means the sandboxd default |
+| `sandbox.cocoonstack.io/size` | in | Claim VM size axis (`small`/`medium`/`large`); empty means the sandboxd default |
 | `sandbox.cocoonstack.io/ttl-seconds` | in | Claim lease in seconds. Absent means 86400, sandboxd's 24h maximum for ordinary claims. An explicit `0` selects sandboxd's five-minute default for ephemeral SDK claims. A non-integer or negative value fails the create |
 | `sandbox.cocoonstack.io/claim-id` | out | Published by the provider on the status push: the sandboxd claim id backing the Pod. The provider's own Pod view may drop it after a resync |
 

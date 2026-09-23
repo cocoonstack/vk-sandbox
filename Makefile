@@ -1,4 +1,4 @@
-.PHONY: all build build-linux test race lint vet fmt fmt-check deps clean coverage cloc help
+.PHONY: all build test lint vet fmt fmt-check deps clean coverage cloc help
 
 REPO_PATH := github.com/cocoonstack/vk-sandbox
 BINARY_NAME := vk-sandbox
@@ -64,24 +64,22 @@ all: deps fmt lint test build ## Full pipeline: deps, fmt, lint, test, build
 
 # --- Dependencies ---
 
-deps: ## Tidy Go modules
-	go mod tidy
+deps: ## Tidy Go modules (no-op when running inside a Go workspace)
+	@if [ -z "$$(go env GOWORK)" ] || [ "$$(go env GOWORK)" = "off" ]; then \
+		go mod tidy; \
+	else \
+		echo "==> workspace mode active ($$(go env GOWORK)); skipping go mod tidy"; \
+	fi
 
 # --- Build ---
 
 build: ## Build vk-sandbox binary
 	CGO_ENABLED=0 go build -ldflags "$(GO_LDFLAGS)" -o $(BUILD_OUT) .
 
-build-linux: ## Build the linux/amd64 binary
-	$(MAKE) GOOS=linux GOARCH=amd64 build
-
 # --- Testing ---
 
 test: vet ## Run tests with race detection and coverage
 	go test -race -timeout 120s -count=1 -cover -coverprofile=coverage.out ./...
-
-race: ## Run tests with race detection only
-	go test -race -timeout 120s -count=1 ./...
 
 coverage: test ## Generate and display coverage report
 	go tool cover -func=coverage.out

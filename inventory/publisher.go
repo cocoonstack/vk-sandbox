@@ -21,8 +21,6 @@ import (
 	"github.com/cocoonstack/vk-sandbox/provider"
 )
 
-const phaseRunning = "Running"
-
 // ClaimAddresses exposes the provider's sandboxd id → address view.
 type ClaimAddresses interface {
 	ClaimAddresses() map[string]string
@@ -54,23 +52,20 @@ func (s *LiveSource) LiveSandboxes(ctx context.Context) ([]scale.InventoryEntry,
 	for _, row := range listed {
 		name := row.ClaimRef
 		name = cmp.Or(name, row.ID)
-		phase := phaseRunning
+		phase := scale.PhaseRunning
 		if row.Hibernated {
-			phase = "Hibernated"
+			phase = scale.PhaseHibernated
 		}
-		e := scale.InventoryEntry{
-			Name:     name,
-			ID:       row.ID,
-			Phase:    phase,
-			ClaimRef: name,
-			Address:  addrByID[row.ID],
-			Template: row.Key.Template,
-		}
-		if !row.Deadline.IsZero() {
-			d := metav1.NewTime(row.Deadline)
-			e.Deadline = &d
-		}
-		out = append(out, e)
+		out = append(out, scale.InventoryEntry{
+			Name:      name,
+			ID:        row.ID,
+			Phase:     phase,
+			ClaimRef:  name,
+			Address:   addrByID[row.ID],
+			Template:  row.Key.Template,
+			Deadline:  publishedTime(row.Deadline),
+			ClaimedAt: publishedTime(row.ClaimedAt),
+		})
 	}
 	slices.SortFunc(out, func(a, b scale.InventoryEntry) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
@@ -138,4 +133,12 @@ func (p *Publisher) PublishPeriodically(ctx context.Context, interval time.Durat
 		case <-ticker.C:
 		}
 	}
+}
+
+func publishedTime(t time.Time) *metav1.Time {
+	if t.IsZero() {
+		return nil
+	}
+	m := metav1.NewTime(t)
+	return &m
 }

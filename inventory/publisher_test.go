@@ -7,7 +7,7 @@ import (
 
 	"github.com/go-logr/logr"
 
-	extv1beta1 "github.com/cocoonstack/sandbox-operator/extensions/api/v1beta1"
+	extv1beta1 "github.com/cocoonstack/sandbox-operator/api/v1beta1"
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 	"github.com/cocoonstack/vk-sandbox/provider"
@@ -19,8 +19,9 @@ func TestLiveSandboxes(t *testing.T) {
 		"ns1/pod-b": {ID: "sb_b"},
 	}
 	deadline := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	claimed := time.Date(2026, 8, 17, 11, 0, 0, 0, time.UTC)
 	lister := staticLister{
-		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline, Key: sandboxd.PoolKey{Template: "rt:24.04"}},
+		{ID: "sb_a", ClaimRef: "ns1/pod-a", Deadline: deadline, ClaimedAt: claimed, Key: sandboxd.PoolKey{Template: "rt:24.04"}},
 		{ID: "sb_b", ClaimRef: "ns1/pod-b", Hibernated: true},
 		{ID: "sb_direct", ClaimRef: "ns2/direct-c"},
 		{ID: "sb_noref"},
@@ -46,6 +47,12 @@ func TestLiveSandboxes(t *testing.T) {
 	}
 	if e := byName["ns1/pod-a"]; e.Template != "rt:24.04" {
 		t.Errorf("ns1/pod-a: template = %q, want rt:24.04", e.Template)
+	}
+	if e := byName["ns1/pod-a"]; e.ClaimedAt == nil || !e.ClaimedAt.Time.Equal(claimed) {
+		t.Errorf("ns1/pod-a: claimedAt = %v, want %v", e.ClaimedAt, claimed)
+	}
+	if e := byName["ns1/pod-b"]; e.ClaimedAt != nil {
+		t.Errorf("ns1/pod-b: claimedAt = %v, want none when the node publishes no claimed_at", e.ClaimedAt)
 	}
 	if e := byName["ns1/pod-b"]; e.Phase != "Hibernated" || e.Address != "" || e.ID != "sb_b" || e.Deadline != nil {
 		t.Errorf("ns1/pod-b: got phase=%q addr=%q id=%q deadline=%v, want Hibernated / no address / sb_b / none", e.Phase, e.Address, e.ID, e.Deadline)

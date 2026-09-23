@@ -2,8 +2,8 @@
 
 A [virtual-kubelet](https://github.com/virtual-kubelet/virtual-kubelet) that
 serves Kubernetes **agent-sandbox semantics** (`agents.x-k8s.io`, driven by
-[sandbox-operator](https://github.com/cocoonstack/sandbox-operator)) from
-[**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
+[kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox))
+from [**sandboxd**](https://github.com/cocoonstack/sandbox) — the node-local
 hot-sandbox daemon that hands over an already-running microVM in **0.2–0.7 ms**.
 
 **Documentation: [cocoonstack.github.io/vk-sandbox](https://cocoonstack.github.io/vk-sandbox/)**
@@ -17,16 +17,26 @@ runs on the node:
 ```mermaid
 flowchart LR
     K["kubectl / any K8s SDK<br/>(Sandbox / SandboxClaim / WarmPool CRs)"]
-    OP["sandbox-operator<br/>L1 claim fast-path · warm pools · admission<br/>L3 aggregated apiserver"]
+    OP["agent-sandbox controller<br/>Sandbox / SandboxClaim / WarmPool → Pods"]
     VK["vk-sandbox (this repo)<br/>one virtual node per sandboxd"]
     SD["sandboxd<br/>node-local hot pool, sub-ms claims"]
+    L3["sandbox-operator<br/>L3 aggregated apiserver, reads NodeInventory"]
     K --> OP --> VK --> SD
+    VK -. NodeInventory .-> L3
 ```
 
-One virtual node fronts one sandboxd. A sandbox Pod scheduled here becomes a
-warm claim; the Pod's IP is the host part of sandboxd's `owner_addr`. The VM
-is released when its owner is deleted, expires, enters teardown, or is
-replaced, or when a bare Pod (no controller owner) is deleted.
+One virtual node fronts one sandboxd. A sandbox Pod whose template carries the
+[Pod contract](docs/pod-contract.md) schedules here and becomes a warm claim;
+the Pod's IP is the host part of sandboxd's `owner_addr`. The VM is released
+when its owner is deleted, expires, enters teardown, or is replaced, or when a
+bare Pod (no controller owner) is deleted.
+
+The seven load-bearing rules this provider keeps — delete authorization, GVR
+derivation, audit-only orphan GC, the stale-UID guard, L0 API hygiene,
+published lease expiry, durable release credentials — are listed in
+[Architecture](docs/architecture.md#the-contracts-this-provider-keeps); the
+Pod annotation contract is in [Pod contract](docs/pod-contract.md) and every
+flag in [Configuration](docs/configuration.md).
 
 ## Quick start
 
@@ -49,47 +59,14 @@ claim URL can remain on loopback.
 The kubelet exec/logs/port-forward surfaces are intentionally not served —
 interactive access goes through the sandbox SDK and preview URLs.
 
-## The contracts this provider keeps
-
-The load-bearing rules, carried over from the production vk-cocoon provider and
-pinned by intent tests:
-
-1. **Pod deletion is not VM authority.** Node-NotReady taint evictions delete
-   every pod on a node while the VMs keep serving users. For a controller-owned
-   Pod, `DeletePod` releases only when the owning `Sandbox` is **confirmed gone** (a
-   structured NotFound naming it in `Details.Name`), replaced by another UID,
-   **in teardown** (deletionTimestamp set), or **expired** (Ready reason
-   `SandboxExpired`). Otherwise the claim is preserved, and a
-   same-name replacement pod **adopts it in place** — no second claim, same VM.
-2. **No naive kind pluralization.** The owner GVR is derived with the es/ies
-   rules (`Sandbox`→`sandboxes`); an endpoint-level 404 *without*
-   `Details.Name` is treated as "GVR guess wrong", never as "owner deleted".
-   (A naive `+"s"` once destroyed a live-owner VM.)
-3. **Audit-only orphan GC.** Background reconciliation can't prove user
-   intent, so the orphan scan only reports; it never releases. A failed
-   sandboxd list is **not** an empty list — the cycle is skipped.
-4. **Stale-UID guard.** Lifecycle requests carrying a previous pod
-   generation's UID are ignored.
-5. **L0 API hygiene.** Status reads are served from the provider's own table;
-   no control-loop LIST hits the apiserver.
-6. **Lease expiry is published, never discovered.** The node grants a lease at
-   claim time and its archive lifecycle may rewrite it. After the cached
-   deadline, the watcher refreshes a still-listed claim or publishes `Failed`
-   on confirmed absence; listing errors defer the decision. virtual-kubelet
-   never polls an asynchronous provider.
-7. **Release credentials survive restarts.** The claim table (sandbox id +
-   release token) persists to a 0600 state file; a provider restart keeps the
-   authority to tear down exactly what it delivered.
-
-The Pod annotation contract and the claim axes are documented in
-[Pod contract](docs/pod-contract.md), the `--publish-inventory` L3 summary in
-[Architecture](docs/architecture.md), and every flag in
-[Configuration](docs/configuration.md).
-
 ## Related projects
 
+- [agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) — the
+  `agents.x-k8s.io` CRDs and the controller that turns a Sandbox into the Pod
+  this provider serves
 - [sandbox-operator](https://github.com/cocoonstack/sandbox-operator) — the
-  Kubernetes control plane that routes sandbox Pods to this provider
+  L3 aggregated apiserver that reads this provider's `NodeInventory`, and the
+  `pkg/sandboxd` client and `pkg/scale` keys this repo imports
 - [sandbox](https://github.com/cocoonstack/sandbox) — sandboxd, the node-local
   hot pool this provider claims from, plus silkd and the SDKs
 - [vk-cocoon](https://github.com/cocoonstack/vk-cocoon) — the sibling provider
@@ -104,14 +81,6 @@ make test
 make lint
 make fmt
 ```
-
-## Community
-
-- Contributions: [CONTRIBUTING.md](CONTRIBUTING.md)
-- Governance: [GOVERNANCE.md](GOVERNANCE.md) · [MAINTAINERS.md](MAINTAINERS.md)
-- Security reports: [SECURITY.md](SECURITY.md)
-- Direction: [ROADMAP.md](ROADMAP.md)
-- Code of conduct: [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
 
 ## License
 

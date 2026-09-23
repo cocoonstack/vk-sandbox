@@ -2,7 +2,7 @@
 
 A [virtual-kubelet](https://github.com/virtual-kubelet/virtual-kubelet)
 provider that serves Kubernetes agent-sandbox semantics (`agents.x-k8s.io`,
-driven by [sandbox-operator](https://github.com/cocoonstack/sandbox-operator))
+driven by [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox))
 from **sandboxd** -- the node-local hot-sandbox daemon of
 [cocoonstack/sandbox](https://github.com/cocoonstack/sandbox).
 
@@ -19,10 +19,10 @@ Kubernetes control plane                    cocoon node
 | Sandbox CR (agents.x-k8s.io)|     |                                      |
 |            |                |     |   +------------------------------+   |
 |            v                |     |   | vk-sandbox                   |   |
-| sandbox-operator            |     |   |  virtual node, kubelet API   |   |
-|  runtime mutator sets       |     |   |  :10260                      |   |
-|  runtime: sandboxd,         |     |   +------------------------------+   |
-|  nodeSelector + toleration  |     |     |  CreatePod       ^ status      |
+| agent-sandbox controller    |     |   |  virtual node, kubelet API   |   |
+|  creates the Pod from a     |     |   |  :10260                      |   |
+|  template carrying runtime: |     |   +------------------------------+   |
+|  sandboxd + selector/tolera.|     |     |  CreatePod       ^ status      |
 +-----------------------------+     |     v                 |             |
             |  scheduler binds      |   POST /v1/claim   id/token/addr     |
             |  the Pod to the       |     |                 |             |
@@ -47,6 +47,9 @@ Kubernetes control plane                    cocoon node
   the binary accepts, plus the claims state file
 - [Pod contract](pod-contract.md) -- the annotations, node labels, and taint
   that route a sandbox Pod here and what the provider writes back
+- [Security model](security.md) -- trust boundaries and how to report a
+  vulnerability
+- [Roadmap](roadmap.md) -- what comes next, by priority
 
 ## Repository
 
