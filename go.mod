@@ -3,17 +3,17 @@ module github.com/cocoonstack/vk-sandbox
 go 1.27.0
 
 require (
-	github.com/cocoonstack/sandbox-operator v0.1.5-0.20260923071935-72100bf448c6
+	github.com/cocoonstack/sandbox-operator v0.1.5-0.20260923080044-9d742faf0e99
 	github.com/go-logr/logr v1.4.4
 	github.com/prometheus/client_model v0.6.3
 	github.com/virtual-kubelet/virtual-kubelet v1.14.0
-	golang.org/x/time v0.15.0
+	golang.org/x/time v0.16.0
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
 	k8s.io/client-go v0.37.0
-	k8s.io/kubelet v0.36.4
+	k8s.io/kubelet v0.37.0
 	sigs.k8s.io/agent-sandbox v1.0.3
-	sigs.k8s.io/controller-runtime v0.25.0
+	sigs.k8s.io/controller-runtime v0.25.1
 )
 
 require (
