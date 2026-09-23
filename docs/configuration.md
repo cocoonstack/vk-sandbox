@@ -21,7 +21,7 @@ environment.
 | `--kube-api-burst` | -- | `400` | client-go burst on top of `--kube-api-qps`, and the burst of the pod queues |
 | `--sandboxd-url` | `SANDBOXD_URL` | `http://127.0.0.1:7777` | sandboxd base URL |
 | `--sandboxd-advertise-addr` | `SANDBOXD_ADVERTISE_ADDR` | host:port of `--sandboxd-url` | `host:port` published in `NodeInventory` for claim routing |
-| `--sandboxd-token-file` | `SANDBOXD_TOKEN_FILE` | none | File holding the sandboxd node API token (trailing whitespace trimmed) |
+| `--sandboxd-token-file` | `SANDBOXD_TOKEN_FILE` | none | File holding the sandboxd node API token (surrounding whitespace trimmed) |
 | `--state-path` | `VK_STATE_PATH` | `/var/lib/vk-sandbox/claims.json` | Claims table persistence path. Required: the binary refuses to start without one, because a node serving real Pods would leak a microVM per claim on restart |
 | `--orphan-scan-interval` | -- | `60s` | Audit-only orphan scan cadence; `0` disables the scan |
 | `--publish-inventory` | -- | `false` | Server-side-apply this node's `NodeInventory` for the L3 aggregation layer |
@@ -62,8 +62,8 @@ Beyond the labels from `--node-labels`, the node always advertises:
 | Addresses | `InternalIP` = `--node-ip` (when set), then `Hostname` = `--node-name` |
 | `DaemonEndpoints.kubeletEndpoint.port` | the port parsed out of `--listen-addr` |
 
-The taint is what keeps ordinary workloads off the virtual node; the operator
-adds the matching toleration to the sandbox Pods it routes here. See
+The taint is what keeps ordinary workloads off the virtual node; the sandbox
+Pod template carries the matching toleration. See
 [Pod contract](pod-contract.md).
 
 ## Kubelet API TLS

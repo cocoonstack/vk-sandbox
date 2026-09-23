@@ -70,6 +70,7 @@ CreatePod
                  +-- error (incl. sandboxd 429 / redirect = no warm capacity)
                  |        -> CreatePod fails, the Pod stays Pending;
                  |           virtual-kubelet retries the create with backoff
+                 |           (restartPolicy Never: the Pod goes Failed instead)
                  |
                  +-- ClaimResult {id, token, owner_addr}
                           |
@@ -265,10 +266,10 @@ node-local daemon holding the warm microVM pools this provider claims from.
 virtual-kubelet for full cocoon MicroVM Pods. The two providers co-exist on
 one physical node as **two distinct virtual nodes**: different node names,
 different kubelet listen ports (vk-cocoon `:10250`, vk-sandbox `:10260`), and
-different routing labels (`node.kubernetes.io/instance-type=virtual-node` for
-vk-cocoon, `sandbox.cocoonstack.io/runtime=sandboxd` here). Both carry the
-`virtual-kubelet.io/provider` taint, which the operator's shared `Exists`
-toleration covers. vk-sandbox can reuse the co-located vk-cocoon kubelet
+different routing labels (`cocoonstack.io/pool=<pool>` for vk-cocoon,
+`sandbox.cocoonstack.io/runtime=sandboxd` here). Both carry the
+`virtual-kubelet.io/provider` taint, which one `Exists` toleration in the Pod
+template covers. vk-sandbox can reuse the co-located vk-cocoon kubelet
 certificate when it is readable, and self-signs otherwise, so its API surface
 is uniform either way. The delete-authorization and audit-only-GC contracts
 implemented here are carried over from vk-cocoon.

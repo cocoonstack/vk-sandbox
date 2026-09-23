@@ -85,7 +85,7 @@ through the sandbox SDK and preview URLs.
 
 | Situation | Behaviour |
 |---|---|
-| No warm capacity (sandboxd `429`, or a redirect to warm peers) | `CreatePod` fails typed; the Pod stays `Pending` and virtual-kubelet retries the create with backoff. This provider never queues or retries into the node itself |
+| No warm capacity (sandboxd `429`, or a redirect to warm peers) | `CreatePod` fails typed; the Pod stays `Pending` and virtual-kubelet retries the create with backoff. Under `restartPolicy: Never` virtual-kubelet marks the Pod `Failed` instead and stops retrying. This provider never queues or retries into the node itself |
 | Missing or invalid `template` / `ttl-seconds` | `CreatePod` fails; no claim is made |
 | Pod deleted, owner `Sandbox` still alive | The claim is **preserved**; the VM keeps running. The owner is re-checked with backoff, and once it is gone, in teardown, expired or replaced the VM is released |
 | Pod deleted, owner `Sandbox` expired (Ready reason `SandboxExpired`) | Release authorized: the operator tore the workload down and no replacement Pod comes |
