@@ -67,7 +67,7 @@ CreatePod
                  |
                  +-- error (incl. sandboxd 429 / redirect = no warm capacity)
                  |        -> CreatePod fails, the Pod stays Pending;
-                 |           the operator's L1 path handles fallback
+                 |           virtual-kubelet retries the create with backoff
                  |
                  +-- ClaimResult {id, token, owner_addr}
                           |
