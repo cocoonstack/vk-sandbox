@@ -48,7 +48,8 @@ runtime.
 ## Annotations
 
 `template` / `net` / `size` are the operator's `pkg/scale` selector keys
-verbatim, so one contract spans the L2 claim gateway and this provider.
+verbatim, so one contract spans the aggregated apiserver's direct claims and
+this provider.
 
 | Annotation | Direction | Meaning |
 |---|---|---|
@@ -84,7 +85,7 @@ through the sandbox SDK and preview URLs.
 
 | Situation | Behaviour |
 |---|---|
-| No warm capacity (sandboxd `429`, or a redirect to warm peers) | `CreatePod` fails typed; the Pod stays `Pending` and the operator's L1 path handles fallback. This provider never queues or retries into the node |
+| No warm capacity (sandboxd `429`, or a redirect to warm peers) | `CreatePod` fails typed; the Pod stays `Pending` and virtual-kubelet retries the create with backoff. This provider never queues or retries into the node itself |
 | Missing or invalid `template` / `ttl-seconds` | `CreatePod` fails; no claim is made |
 | Pod deleted, owner `Sandbox` still alive | The claim is **preserved**; the VM keeps running |
 | Pod deleted, owner `Sandbox` expired (Ready reason `SandboxExpired`) | Release authorized: the operator tore the workload down and no replacement Pod comes |

@@ -56,6 +56,8 @@ Beyond the labels from `--node-labels`, the node always advertises:
 | Field | Value |
 |---|---|
 | Label `type` | `virtual-kubelet` |
+| Label `kubernetes.io/role` | `agent` |
+| Label `kubernetes.io/hostname` | `--node-name` |
 | Taint | `virtual-kubelet.io/provider=sandboxd:NoSchedule` |
 | Addresses | `InternalIP` = `--node-ip` (when set), then `Hostname` = `--node-name` |
 | `DaemonEndpoints.kubeletEndpoint.port` | the port parsed out of `--listen-addr` |

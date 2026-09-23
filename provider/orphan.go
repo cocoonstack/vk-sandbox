@@ -11,19 +11,9 @@ const (
 	verdictStale    = "stale"
 )
 
-// OrphanScan compares the node's live sandboxes against the claims table.
-// It is strictly audit-only, carrying over two hard-won vk-cocoon rules:
-//
-//   - Background reconciliation can never prove user intent, so it NEVER
-//     releases or destroys anything. It only logs candidates for an explicit,
-//     identity-checked cleanup.
-//   - A failed list query is NOT an empty list. Treating "query failed" as
-//     "zero known sandboxes" once deleted every active VM's state in one
-//     sweep (2026-05-15); on failure the whole cycle is skipped.
-//
-// Returns (orphans, staleClaims, ok): sandboxd rows with neither a local claim
-// nor a claim_ref (an unheld claim_ref marks an apiserver-direct claim, not an
-// orphan), and claim entries whose sandbox is gone.
+// OrphanScan compares the node's live sandboxes against the claims table and
+// only reports: background reconciliation cannot prove intent, and a failed
+// listing is not an empty list. Returns orphans, stale claim keys, and ok.
 func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaims []string, ok bool) {
 	if p.lister == nil {
 		return nil, nil, false
@@ -34,10 +24,7 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 		return nil, nil, false
 	}
 
-	live := make(map[string]struct{}, len(listed))
-	for _, s := range listed {
-		live[s.ID] = struct{}{}
-	}
+	live := liveDeadlines(listed)
 
 	p.mu.RLock()
 	claimed := make(map[string]string, len(p.claims)) // claim id -> pod key
@@ -82,22 +69,15 @@ func (p *Provider) RunOrphanScan(ctx context.Context, interval time.Duration) {
 	})
 }
 
-// RunClaimVerification re-checks the claims table against the node until ctx is
-// done. It is separate from the orphan scan because that one is an operator
-// audit an operator may switch off, while this is what lifts a startup
-// quarantine — a claim the node still holds must become usable again.
+// RunClaimVerification lifts a startup quarantine on its own loop, so switching the audit scan off cannot strand a claim.
 func (p *Provider) RunClaimVerification(ctx context.Context, interval time.Duration) {
 	runTicker(ctx, interval, func() bool {
 		return !p.VerifyClaimsAgainstNode(ctx) || p.hasQuarantined()
 	})
 }
 
-// RunLeaseWatch publishes the Failed status of pods whose sandbox lease has
-// ended. It exists because implementing NotifyPods makes this an asynchronous
-// provider — virtual-kubelet then never polls GetPodStatus, so a status pushed
-// as Running would stand forever after the reaper destroys the VM. The expired
-// status is deterministic (built from the claim's own timestamps), so pushing
-// it again each tick patches nothing server-side; no fired-marker is needed.
+// RunLeaseWatch pushes Failed for pods whose lease ended; virtual-kubelet never polls
+// an asynchronous provider. The status is deterministic, so a repeat push patches nothing.
 func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
 	runTicker(ctx, interval, func() bool {
 		p.publishExpiredLeases(ctx)
@@ -105,9 +85,7 @@ func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
 	})
 }
 
-// recordVerdict stores this cycle's verdict for a sandbox and logs only a
-// transition (#3): re-logging an unchanged verdict every cycle buried genuine
-// orphans in permanent noise.
+// recordVerdict logs a verdict only when it changed since the previous scan (#3).
 func (p *Provider) recordVerdict(verdicts map[string]string, id, verdict, msg string, kv ...any) {
 	verdicts[id] = verdict
 	if p.orphanVerdicts[id] != verdict {
@@ -124,10 +102,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	var candidates []candidate
 	p.mu.RLock()
 	for key, c := range p.claims {
-		if c.Deadline.IsZero() || now.Before(c.Deadline.Time) {
-			continue
-		}
-		if !p.settled(key) || p.pods[key] == nil {
+		if !c.expired(now) || !p.settled(key) || p.pods[key] == nil {
 			continue
 		}
 		candidates = append(candidates, candidate{key: key, claim: c})
@@ -137,11 +112,8 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 		return
 	}
 
-	// Failed is terminal — virtual-kubelet refuses further updates for such a
-	// Pod — and the cached deadline is not authoritative: the archive lifecycle
-	// rewrites a claim's lease on the node. So the node confirms every terminal
-	// publication, a still-listed claim just gets its deadline refreshed, and an
-	// unlistable node publishes nothing this tick.
+	// Failed is terminal and the cached deadline is not authoritative, so the node
+	// confirms every publication; an unlistable node publishes nothing this tick.
 	live := map[string]time.Time{}
 	if p.lister != nil {
 		listed, err := p.lister.Sandboxes(ctx)
@@ -158,8 +130,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 			p.refreshDeadline(cand.key, cand.claim.ID, rowDeadline)
 			continue
 		}
-		// The key may have changed hands behind the listing; the expiry
-		// belongs to the candidate claim, not to whatever holds the key now.
+		// The expiry belongs to the candidate claim, not to whatever holds the key now.
 		p.mu.RLock()
 		pod := p.pods[cand.key]
 		current, held := p.claims[cand.key]

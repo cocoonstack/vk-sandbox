@@ -63,11 +63,11 @@ CreatePod
         +-- a claim already exists for <namespace>/<name>
         |        -> adopt in place: rebind the pod UID, no new VM
         |
-        +-- otherwise: POST /v1/claim {template, net, size, ttl_seconds}
+        +-- otherwise: POST /v1/claim {template, net, size, ttl_seconds, claim_ref}
                  |
                  +-- error (incl. sandboxd 429 / redirect = no warm capacity)
                  |        -> CreatePod fails, the Pod stays Pending;
-                 |           the operator's L1 path handles fallback
+                 |           virtual-kubelet retries the create with backoff
                  |
                  +-- ClaimResult {id, token, owner_addr}
                           |
@@ -119,9 +119,9 @@ rules (`Sandbox` -> `sandboxes`, `policy` -> `policies`), never a naive
 `+ "s"`. Even so, a wrong guess is safe: an endpoint-level 404 carries no
 `Details.Name` and is read as "unverifiable", not "owner deleted".
 
-On an authorized release, a sandboxd `404` is treated as convergence (already
-gone); any other release error keeps the claim and the Pod entry so the
-kubelet retries with the credential intact.
+On an authorized release, the sandboxd client treats a `404` as already gone;
+any other release error keeps the claim and the Pod entry so the kubelet
+retries with the credential intact.
 
 ## Claims table persistence
 

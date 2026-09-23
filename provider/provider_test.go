@@ -1356,8 +1356,7 @@ func ownerSandbox(ns, name string, uid types.UID, deleting bool) *unstructured.U
 	u.SetName(name)
 	u.SetUID(uid)
 	if deleting {
-		now := metav1.Now()
-		u.SetDeletionTimestamp(&now)
+		u.SetDeletionTimestamp(new(metav1.Now()))
 		u.SetFinalizers([]string{"keep"})
 	}
 	return u

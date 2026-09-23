@@ -16,9 +16,7 @@ import (
 )
 
 const (
-	// authPreserve: pod deletion is NOT authority over the sandbox — keep the
-	// claim alive for a same-key replacement pod to adopt (pod churn, eviction
-	// storms, provider restart, or an unverifiable owner query).
+	// authPreserve keeps the claim for a same-key replacement pod to adopt.
 	authPreserve authVerdict = iota
 	// authRelease permits teardown under the owner or bare-Pod contract.
 	authRelease
@@ -27,20 +25,7 @@ const (
 // authVerdict is the destroy-authorization decision for one pod deletion.
 type authVerdict int
 
-// controllerOwnerRef returns the pod's controller owner reference, or nil for bare pods.
-func controllerOwnerRef(pod *corev1.Pod) *metav1.OwnerReference {
-	for i := range pod.OwnerReferences {
-		ref := &pod.OwnerReferences[i]
-		if ref.Controller != nil && *ref.Controller {
-			return ref
-		}
-	}
-	return nil
-}
-
-// ownerGVR maps an ownerReference (apiVersion, kind) to the GVR used for the
-// destroy-authorization quorum read. Unknown shapes return ok=false and the
-// caller preserves.
+// ownerGVR derives the owner's GVR from its ownerReference; an unknown shape preserves.
 func ownerGVR(apiVersion, kind string) (schema.GroupVersionResource, bool) {
 	if kind == "" {
 		return schema.GroupVersionResource{}, false
@@ -52,13 +37,8 @@ func ownerGVR(apiVersion, kind string) (schema.GroupVersionResource, bool) {
 	return gv.WithResource(pluralResource(strings.ToLower(kind))), true
 }
 
-// pluralResource maps a lowercase kind to its REST resource name with the
-// English rules that hold for every Kubernetes controller kind
-// (sandbox→sandboxes, replicaset→replicasets, policy→policies). Naive +"s"
-// destroyed a live-owner VM on 2026-07-17: "Sandbox" became "sandboxs", the
-// endpoint 404'd, and the 404 read as "owner deleted". A wrong guess is still
-// safe now — destroyAuthorized treats an endpoint-level 404 (no Details.Name)
-// as unverifiable (preserve), never owner-gone.
+// pluralResource applies the es/ies rules; a naive +"s" made Sandbox "sandboxs" and its
+// 404 read as owner gone (2026-07-17). A wrong guess now preserves, never releases.
 func pluralResource(lower string) string {
 	switch {
 	case strings.HasSuffix(lower, "s"), strings.HasSuffix(lower, "x"),
@@ -72,23 +52,11 @@ func pluralResource(lower string) string {
 	}
 }
 
-// destroyAuthorized decides whether deleting this pod authorizes releasing its
-// node-local sandbox (which destroys the VM). The contract, carried over from
-// the vk-cocoon delete-authorization work (2026-07-17):
-//
-//   - Pod deletion alone is NEVER VM authority. Node-NotReady taint evictions
-//     delete every pod on a node while the sandboxes keep serving users.
-//   - Release is authorized only when the pod's controller owner CR (the
-//     agents.x-k8s.io Sandbox created by sandbox-operator) is confirmed gone,
-//     has a different UID, has a deletionTimestamp, or reports SandboxExpired.
-//   - An endpoint-level 404 without Details.Name means the GVR guess was wrong,
-//     not that the owner is gone: preserve.
-//   - Any query error preserves: better to leak a warm sandbox than to destroy
-//     one the owner still expects.
-//   - A bare pod (no controller ownerReference) is its own authority: the pod
-//     IS the teardown intent, so its deletion releases.
+// destroyAuthorized releases for a bare pod, or when the controller owner is
+// confirmed gone by name, in teardown, expired, or replaced under a new UID.
+// A 404 without Details.Name and any query error preserve.
 func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.Pod) (authVerdict, string) {
-	ref := controllerOwnerRef(pod)
+	ref := metav1.GetControllerOf(pod)
 	if ref == nil {
 		return authRelease, "bare pod: pod deletion is the owner teardown"
 	}
@@ -115,10 +83,8 @@ func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, pod *corev1.P
 	if ownerExpired(obj) {
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " expired: the operator tore its workload down"
 	}
-	if string(obj.GetUID()) != string(ref.UID) && ref.UID != "" {
-		// Same-name owner with a different UID: the referenced owner generation
-		// is gone and something new took its name. The referenced owner no
-		// longer exists, so its teardown is complete.
+	if ref.UID != "" && obj.GetUID() != ref.UID {
+		// A same-name owner under a new UID means the referenced generation is gone.
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " UID rotated: referenced generation gone"
 	}
 	return authPreserve, "owner " + ref.Kind + " " + ref.Name + " alive: pod deletion is not VM authority"
@@ -135,8 +101,7 @@ func ownerExpired(obj *unstructured.Unstructured) bool {
 	return false
 }
 
-// notFoundName extracts the object name a genuine NotFound status carries in
-// Details.Name; empty when the error is not a structured NotFound.
+// notFoundName is the Details.Name a structured NotFound carries; empty otherwise.
 func notFoundName(err error) string {
 	var se k8serrors.APIStatus
 	if errors.As(err, &se) {
