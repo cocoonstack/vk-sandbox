@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
@@ -15,34 +16,37 @@ import (
 )
 
 func TestPodQueuesFollowTheClientBudget(t *testing.T) {
-	o := &options{nodeName: "vk-test", listenAddr: "127.0.0.1:10260", kubeQPS: 200, kubeBurst: 400}
-	opts, err := o.nodeOptions(fake.NewSimpleClientset())
-	if err != nil {
-		t.Fatalf("nodeOptions: %v", err)
-	}
-	var cfg nodeutil.NodeConfig
-	for _, opt := range opts {
-		if err := opt(&cfg); err != nil {
-			t.Fatalf("node option: %v", err)
-		}
-	}
-	var c node.PodControllerConfig
-	for _, override := range cfg.PodControllerConfigOpts {
-		if err := override(&c); err != nil {
-			t.Fatalf("pod controller override: %v", err)
-		}
-	}
-	for name, l := range map[string]workqueue.TypedRateLimiter[any]{
-		"sync":   c.SyncPodsFromKubernetesRateLimiter,
-		"delete": c.DeletePodsFromKubernetesRateLimiter,
-		"status": c.SyncPodStatusFromProviderRateLimiter,
+	for _, tc := range []struct {
+		name      string
+		qps       float64
+		burst     int
+		undelayed int
+		limited   bool
+		pastMax   time.Duration
+	}{
+		{"configured", 100, 400, 400, true, 10 * time.Millisecond},
+		{"client-go defaults", 0, 0, restclient.DefaultBurst, true, time.Second / time.Duration(restclient.DefaultQPS)},
+		{"unlimited", -1, 0, 1000, false, podRetryBaseDelay},
 	} {
-		if l == nil {
-			t.Fatalf("%s queue keeps virtual-kubelet's default limiter", name)
+		for queue, l := range podQueues(t, tc.qps, tc.burst) {
+			for i := range tc.undelayed {
+				if d := l.When(i); d > podRetryBaseDelay {
+					t.Fatalf("%s: %s queue delayed pod %d by %v inside the client's burst", tc.name, queue, i, d)
+				}
+			}
+			if d := l.When(tc.undelayed); d > tc.pastMax || tc.limited && d <= podRetryBaseDelay {
+				t.Fatalf("%s: %s queue delayed pod %d past the client's burst by %v, want at most %v", tc.name, queue, tc.undelayed, d, tc.pastMax)
+			}
 		}
-		for i := range 300 {
-			if d := l.When(i); d > podRetryBaseDelay {
-				t.Fatalf("%s queue delayed pod %d by %v inside the client's burst", name, i, d)
+	}
+}
+
+func TestPodQueuesBackOffAFailingPod(t *testing.T) {
+	for _, qps := range []float64{100, -1} {
+		for queue, l := range podQueues(t, qps, 400) {
+			l.When("pod")
+			if d := l.When("pod"); d != 2*podRetryBaseDelay {
+				t.Fatalf("qps %v: %s queue retried a failing pod after %v, want %v", qps, queue, d, 2*podRetryBaseDelay)
 			}
 		}
 	}
@@ -82,4 +86,36 @@ func BenchmarkClientThrottle(b *testing.B) {
 			}
 		})
 	}
+}
+
+func podQueues(t *testing.T, qps float64, burst int) map[string]workqueue.TypedRateLimiter[any] {
+	t.Helper()
+	o := &options{nodeName: "vk-test", listenAddr: "127.0.0.1:10260", kubeQPS: qps, kubeBurst: burst}
+	opts, err := o.nodeOptions(fake.NewSimpleClientset())
+	if err != nil {
+		t.Fatalf("nodeOptions: %v", err)
+	}
+	var cfg nodeutil.NodeConfig
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			t.Fatalf("node option: %v", err)
+		}
+	}
+	var c node.PodControllerConfig
+	for _, override := range cfg.PodControllerConfigOpts {
+		if err := override(&c); err != nil {
+			t.Fatalf("pod controller override: %v", err)
+		}
+	}
+	queues := map[string]workqueue.TypedRateLimiter[any]{
+		"sync":   c.SyncPodsFromKubernetesRateLimiter,
+		"delete": c.DeletePodsFromKubernetesRateLimiter,
+		"status": c.SyncPodStatusFromProviderRateLimiter,
+	}
+	for name, l := range queues {
+		if l == nil {
+			t.Fatalf("%s queue keeps virtual-kubelet's default limiter", name)
+		}
+	}
+	return queues
 }
