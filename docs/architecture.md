@@ -272,7 +272,8 @@ Pod here by carrying the [Pod contract](pod-contract.md) itself.
 the L3 aggregated apiserver and the `NodeInventory` CRD
 (`sandbox.cocoonstack.io`) this provider publishes into. vk-sandbox owns the
 node transaction plane and imports the operator's `pkg/sandboxd` for the
-client and `pkg/scale` for selector keys and the inventory applier. The
+client, `pkg/scale` for selector keys and the inventory applier, and
+`pkg/logbridge` to route controller-runtime's log output through core/log. The
 dependency points one way: the operator does not import this repo.
 
 **[sandbox](https://github.com/cocoonstack/sandbox)** ships sandboxd, the
