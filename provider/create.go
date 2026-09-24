@@ -144,9 +144,6 @@ func (p *Provider) adoptExistingClaim(key string, pod *corev1.Pod) (Claim, bool)
 	c.PodUID = string(pod.UID)
 	c.Authority = new(authorityOf(pod))
 	c.Owner = nil
-	if c.ClaimedAt.IsZero() {
-		c.ClaimedAt = metav1.Now()
-	}
 	p.claims[key] = c
 	p.pods[key] = pod.DeepCopy()
 	return c, true

@@ -72,7 +72,7 @@ type Publisher struct {
 	nodeSeen bool
 }
 
-// NewPublisher builds a Publisher for node; a nil info publishes entries only.
+// NewPublisher builds a Publisher for node.
 func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, nodes NodeGetter, applier scale.InventoryApplier, log logr.Logger) *Publisher {
 	return &Publisher{node: node, live: live, info: info, nodes: nodes, applier: applier, log: log}
 }
@@ -95,14 +95,12 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 		Entries:         entries,
 		OwnerReferences: owners,
 	}
-	if p.info != nil {
-		ni, infoErr := p.info.NodeInfo(ctx)
-		if infoErr != nil {
-			return 0, fmt.Errorf("inventory: read node %q info: %w", p.node, infoErr)
-		}
-		inv.Address = ni.Address
-		inv.Pools = ni.Pools
+	ni, err := p.info.NodeInfo(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("inventory: read node %q info: %w", p.node, err)
 	}
+	inv.Address = ni.Address
+	inv.Pools = ni.Pools
 	if err := p.applier.Apply(ctx, inv); err != nil {
 		return 0, fmt.Errorf("inventory: apply node %q inventory: %w", p.node, err)
 	}

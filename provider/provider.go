@@ -203,9 +203,6 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 			delete(p.quarantined, key)
 			continue
 		}
-		if _, pending := p.tentative[key]; pending {
-			continue // mid-create, not yet reported by sandboxd
-		}
 		delete(p.claims, key)
 		delete(p.quarantined, key)
 		p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", id)

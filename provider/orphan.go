@@ -102,17 +102,13 @@ func (p *Provider) recordVerdict(verdicts map[string]string, id, verdict, msg st
 
 func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	now := time.Now()
-	type candidate struct {
-		key   string
-		claim Claim
-	}
-	var candidates []candidate
+	candidates := map[string]Claim{}
 	p.mu.RLock()
 	for key, c := range p.claims {
 		if !c.expired(now) || !p.settled(key) || p.pods[key] == nil {
 			continue
 		}
-		candidates = append(candidates, candidate{key: key, claim: c})
+		candidates[key] = c
 	}
 	p.mu.RUnlock()
 	if len(candidates) == 0 {
@@ -131,22 +127,22 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 		live = liveDeadlines(listed)
 	}
 
-	for _, cand := range candidates {
-		rowDeadline, alive := live[cand.claim.ID]
+	for key, c := range candidates {
+		rowDeadline, alive := live[c.ID]
 		if alive {
-			p.refreshDeadline(cand.key, cand.claim.ID, rowDeadline)
+			p.refreshDeadline(key, c.ID, rowDeadline)
 			continue
 		}
 		// The expiry belongs to the candidate claim, not to whatever holds the key now.
 		p.mu.RLock()
-		pod := p.pods[cand.key]
-		current, held := p.claims[cand.key]
+		pod := p.pods[key]
+		current, held := p.claims[key]
 		p.mu.RUnlock()
-		if pod == nil || !held || current.ID != cand.claim.ID {
+		if pod == nil || !held || current.ID != c.ID {
 			continue
 		}
 		out := pod.DeepCopy()
-		out.Status = expiredStatus(out, cand.claim)
+		out.Status = expiredStatus(out, c)
 		p.notify(out)
 	}
 }

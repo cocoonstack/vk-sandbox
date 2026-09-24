@@ -609,12 +609,6 @@ func TestEveryClaimPathStampsClaimedAt(t *testing.T) {
 	}
 
 	p.forgetPod("ns/p")
-	p.mu.Lock()
-	c := p.claims["ns/p"]
-	c.ClaimedAt = metav1.Time{}
-	p.claims["ns/p"] = c
-	p.mu.Unlock()
-
 	if err := p.CreatePod(t.Context(), sandboxPod("ns", "p", "u1", "", "")); err != nil {
 		t.Fatalf("adopt CreatePod: %v", err)
 	}

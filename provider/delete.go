@@ -31,9 +31,10 @@ func (p *Provider) DeletePod(ctx context.Context, pod *corev1.Pod) error {
 	}
 
 	p.log.Info("release authorized", "pod", key, "claim", c.ID, "reason", reason)
-	if err := p.releaseClaim(ctx, key, c); err != nil {
+	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
 		return fmt.Errorf("release sandbox %s for %s: %w", c.ID, key, err)
 	}
+	p.withdrawClaim(key, c.ID)
 	p.saveState()
 	return nil
 }
@@ -54,12 +55,4 @@ func (p *Provider) preserveClaim(key, id string, owner *metav1.OwnerReference) {
 	}
 	p.mu.Unlock()
 	p.saveState()
-}
-
-func (p *Provider) releaseClaim(ctx context.Context, key string, c Claim) error {
-	if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
-		return err
-	}
-	p.withdrawClaim(key, c.ID)
-	return nil
 }

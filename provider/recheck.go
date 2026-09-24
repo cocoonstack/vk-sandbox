@@ -72,7 +72,6 @@ func (p *Provider) withdrawForRelease(key string, c Claim) bool {
 		return false
 	}
 	delete(p.claims, key)
-	delete(p.quarantined, key)
 	p.releasing = append(p.releasing, c)
 	return true
 }
