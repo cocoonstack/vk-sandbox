@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -103,6 +104,7 @@ func main() {
 		os.Exit(1)
 	}
 	crlog.SetLogger(logbridge.New(ctx))
+	klog.SetLogger(logbridge.New(ctx).WithName("klog"))
 	logger := log.WithFunc("main")
 	if err := o.run(ctx); err != nil {
 		logger.Fatalf(ctx, err, "vk-sandbox exited")
