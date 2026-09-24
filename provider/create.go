@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/projecteru2/core/log"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -38,6 +39,7 @@ const (
 )
 
 func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
+	logger := log.WithFunc("provider.CreatePod")
 	key := podKey(pod.Namespace, pod.Name)
 
 	if rt := ann(pod, AnnRuntime, RuntimeSandboxd); rt != RuntimeSandboxd {
@@ -54,8 +56,8 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 
 	// The adopted credential is already durable, so this save is log-only.
 	if c, ok := p.adoptExistingClaim(key, pod); ok {
-		p.saveState()
-		p.log.Info("adopted preserved sandbox for replacement pod", "pod", key, "claim", c.ID)
+		p.saveState(ctx)
+		logger.Infof(ctx, "adopted preserved sandbox for replacement pod pod=%s claim=%s", key, c.ID)
 		p.pushRunning(pod, c)
 		return nil
 	}
@@ -107,7 +109,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 		return p.undoUnpersistedClaim(ctx, key, c, err)
 	}
 
-	p.log.Info("claimed hot sandbox", "pod", key, "claim", c.ID, "addr", c.Address)
+	logger.Infof(ctx, "claimed hot sandbox pod=%s claim=%s addr=%s", key, c.ID, c.Address)
 	p.pushRunning(pod, c)
 	return nil
 }
@@ -115,7 +117,7 @@ func (p *Provider) CreatePod(ctx context.Context, pod *corev1.Pod) error {
 func (p *Provider) UpdatePod(ctx context.Context, pod *corev1.Pod) error {
 	key := podKey(pod.Namespace, pod.Name)
 	if !p.podUIDIsCurrent(key, pod) {
-		p.log.Info("ignoring stale UpdatePod for previous pod generation", "pod", key, "uid", pod.UID)
+		log.WithFunc("provider.UpdatePod").Infof(ctx, "ignoring stale UpdatePod for previous pod generation pod=%s uid=%s", key, pod.UID)
 		return nil
 	}
 	p.mu.Lock()
@@ -202,22 +204,22 @@ func (p *Provider) clearStrandedClaim(ctx context.Context, key string) error {
 		return fmt.Errorf("pod %s: a previous sandbox %s could not be returned and its credential is only in memory: %w", key, c.ID, err)
 	}
 	p.withdrawClaim(key, c.ID)
-	p.log.Info("returned a stranded sandbox before reusing its pod key", "pod", key, "claim", c.ID)
+	log.WithFunc("provider.clearStrandedClaim").Infof(ctx, "returned a stranded sandbox before reusing its pod key pod=%s claim=%s", key, c.ID)
 	return nil
 }
 
 // undoUnpersistedClaim returns a just-claimed sandbox; if that fails too, the credential stays in memory.
 func (p *Provider) undoUnpersistedClaim(ctx context.Context, key string, c Claim, persistErr error) error {
+	logger := log.WithFunc("provider.undoUnpersistedClaim")
 	if err := p.releaseDetached(ctx, c); err != nil {
-		p.log.Error(err, "could not return a sandbox whose claim failed to persist; keeping the credential in memory",
-			"pod", key, "claim", c.ID)
+		logger.Errorf(ctx, err, "could not return a sandbox whose claim failed to persist; keeping the credential in memory pod=%s claim=%s", key, c.ID)
 		return errors.Join(
 			fmt.Errorf("persist claim for %s: %w", key, persistErr),
 			fmt.Errorf("release sandbox %s: %w", c.ID, err),
 		)
 	}
 	p.withdrawClaim(key, c.ID)
-	p.log.Info("returned sandbox after its claim could not be persisted", "pod", key, "claim", c.ID)
+	logger.Infof(ctx, "returned sandbox after its claim could not be persisted pod=%s claim=%s", key, c.ID)
 	return fmt.Errorf("persist claim for %s: %w", key, persistErr)
 }
 

@@ -9,7 +9,6 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -84,7 +83,7 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 		},
 	}}
 	applier := &captureApplier{}
-	pub := NewPublisher("vk-sandboxd-26", live, info, registered("vk-sandboxd-26", "uid-26"), applier, logr.Discard())
+	pub := NewPublisher("vk-sandboxd-26", live, info, registered("vk-sandboxd-26", "uid-26"), applier)
 
 	n, err := pub.Publish(t.Context())
 	if err != nil {
@@ -116,7 +115,7 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 
 func TestPublisherHandsTheInventoryToItsNode(t *testing.T) {
 	applier := &captureApplier{}
-	pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("n1", "uid-1"), applier, logr.Discard())
+	pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("n1", "uid-1"), applier)
 	if _, err := pub.Publish(t.Context()); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -128,7 +127,7 @@ func TestPublisherHandsTheInventoryToItsNode(t *testing.T) {
 
 func TestPublisherPublishesBeforeTheNodeRegisters(t *testing.T) {
 	applier := &captureApplier{}
-	pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("other", "uid-2"), applier, logr.Discard())
+	pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("other", "uid-2"), applier)
 	if _, err := pub.Publish(t.Context()); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -140,7 +139,7 @@ func TestPublisherPublishesBeforeTheNodeRegisters(t *testing.T) {
 func TestPublisherStopsOnceItsNodeIsDeleted(t *testing.T) {
 	cs := fake.NewClientset(&corev1.Node{Name: "n1", UID: "uid-1"})
 	applier := &captureApplier{}
-	pub := NewPublisher("n1", staticLive{}, staticInfo{}, cs.CoreV1().Nodes(), applier, logr.Discard())
+	pub := NewPublisher("n1", staticLive{}, staticInfo{}, cs.CoreV1().Nodes(), applier)
 	if _, err := pub.Publish(t.Context()); err != nil {
 		t.Fatalf("Publish: %v", err)
 	}
@@ -155,7 +154,7 @@ func TestPublisherStopsOnceItsNodeIsDeleted(t *testing.T) {
 
 func TestPublisherHoldsTheInventoryWhenTheNodeIsUnreadable(t *testing.T) {
 	applier := &captureApplier{}
-	pub := NewPublisher("n1", staticLive{}, staticInfo{}, unreadableNodes{}, applier, logr.Discard())
+	pub := NewPublisher("n1", staticLive{}, staticInfo{}, unreadableNodes{}, applier)
 	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
 		t.Fatalf("an unreadable Node must fail the publish before the apply: err=%v applied=%+v", err, applier.got)
 	}
@@ -164,7 +163,7 @@ func TestPublisherHoldsTheInventoryWhenTheNodeIsUnreadable(t *testing.T) {
 func TestPublisherHoldsTheInventoryWhenNodeInfoFails(t *testing.T) {
 	applier := &captureApplier{}
 	info := staticInfo{err: errors.New("sandboxd unreachable")}
-	pub := NewPublisher("n1", staticLive{}, info, registered("n1", "uid-1"), applier, logr.Discard())
+	pub := NewPublisher("n1", staticLive{}, info, registered("n1", "uid-1"), applier)
 	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
 		t.Fatalf("a failed node-info read must skip the apply, not publish the node without its address and pools: err=%v applied=%+v", err, applier.got)
 	}
@@ -173,7 +172,7 @@ func TestPublisherHoldsTheInventoryWhenNodeInfoFails(t *testing.T) {
 func TestPublisherHoldsTheInventoryWhenSandboxdCannotBeListed(t *testing.T) {
 	applier := &captureApplier{}
 	live := NewLiveSource(staticClaims{}, unlistableSandboxd{})
-	pub := NewPublisher("n1", live, staticInfo{}, registered("n1", "uid-1"), applier, logr.Discard())
+	pub := NewPublisher("n1", live, staticInfo{}, registered("n1", "uid-1"), applier)
 	if _, err := pub.Publish(t.Context()); err == nil || applier.got != nil {
 		t.Fatalf("a failed sandboxd listing must skip the apply, not publish the node with no sandboxes: err=%v applied=%+v", err, applier.got)
 	}
@@ -182,7 +181,7 @@ func TestPublisherHoldsTheInventoryWhenSandboxdCannotBeListed(t *testing.T) {
 func TestPublisherPublishesAtStartAndOnEveryTick(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		applier := &captureApplier{}
-		pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("n1", "uid-1"), applier, logr.Discard())
+		pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("n1", "uid-1"), applier)
 		go pub.PublishPeriodically(t.Context(), time.Second)
 		time.Sleep(2 * time.Second)
 		synctest.Wait()

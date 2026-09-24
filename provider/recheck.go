@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/projecteru2/core/log"
 )
 
 const ownerRecheckMaxDelay = 10 * time.Minute
@@ -25,6 +27,7 @@ func (p *Provider) RunOwnerRecheck(ctx context.Context, interval time.Duration) 
 
 // recheckOwners asks about each due preserved claim's owner with the delete verdicts, backing off from base, then drains the release queue.
 func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.Duration) {
+	logger := log.WithFunc("provider.recheckOwners")
 	p.mu.RLock()
 	preserved := map[string]Claim{}
 	for key, c := range p.claims {
@@ -45,13 +48,13 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 		verdict, reason := destroyAuthorized(ctx, p.dyn, namespace, c.Owner)
 		if verdict == authRelease {
 			if p.withdrawForRelease(key, c) {
-				p.log.Info("releasing a preserved sandbox", "pod", key, "claim", c.ID, "reason", reason)
+				logger.Infof(ctx, "releasing a preserved sandbox pod=%s claim=%s reason=%s", key, c.ID, reason)
 				changed = true
 			}
 			delete(p.ownerRechecks, key)
 			continue
 		}
-		p.log.V(1).Info("preserved sandbox stays", "pod", key, "claim", c.ID, "reason", reason)
+		logger.Debugf(ctx, "preserved sandbox stays pod=%s claim=%s reason=%s", key, c.ID, reason)
 		delay := base
 		if seen {
 			delay = min(2*r.delay, ownerRecheckMaxDelay)
@@ -59,7 +62,7 @@ func (p *Provider) recheckOwners(ctx context.Context, now time.Time, base time.D
 		p.ownerRechecks[key] = ownerRecheck{at: now.Add(delay), delay: delay}
 	}
 	if p.drainReleases(ctx) || changed {
-		p.saveState()
+		p.saveState(ctx)
 	}
 }
 
@@ -78,19 +81,20 @@ func (p *Provider) withdrawForRelease(key string, c Claim) bool {
 
 // drainReleases releases every queued claim it can; a failed release stays queued for the next tick.
 func (p *Provider) drainReleases(ctx context.Context) bool {
+	logger := log.WithFunc("provider.drainReleases")
 	p.mu.RLock()
 	queued := slices.Clone(p.releasing)
 	p.mu.RUnlock()
 	released := false
 	for _, c := range queued {
 		if err := p.client.Release(ctx, c.ID, c.Token); err != nil {
-			p.log.Error(err, "release of a preserved sandbox failed", "claim", c.ID)
+			logger.Errorf(ctx, err, "release of a preserved sandbox failed claim=%s", c.ID)
 			continue
 		}
 		p.mu.Lock()
 		p.releasing = slices.DeleteFunc(p.releasing, func(q Claim) bool { return q.ID == c.ID })
 		p.mu.Unlock()
-		p.log.Info("released a preserved sandbox", "claim", c.ID)
+		logger.Infof(ctx, "released a preserved sandbox claim=%s", c.ID)
 		released = true
 	}
 	return released

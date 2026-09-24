@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -13,7 +12,6 @@ import (
 func BenchmarkCommitClaim(b *testing.B) {
 	p, err := New(b.Context(), Config{
 		StatePath: filepath.Join(b.TempDir(), "claims.json"),
-		Logger:    logr.Discard(),
 	})
 	if err != nil {
 		b.Fatalf("new provider: %v", err)
