@@ -217,7 +217,7 @@ func (o *options) sandboxdToken() (string, error) {
 	if o.tokenFile == "" {
 		return "", nil
 	}
-	b, err := os.ReadFile(o.tokenFile) //nolint:gosec // operator-supplied path
+	b, err := os.ReadFile(o.tokenFile)
 	if err != nil {
 		return "", fmt.Errorf("read sandboxd token file: %w", err)
 	}
