@@ -3,42 +3,47 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	restclient "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
 )
 
 func TestPodQueuesFollowTheClientBudget(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		qps       float64
-		burst     int
-		undelayed int
-		limited   bool
-		pastMax   time.Duration
-	}{
-		{"configured", 100, 400, 400, true, 10 * time.Millisecond},
-		{"client-go defaults", 0, 0, restclient.DefaultBurst, true, time.Second / time.Duration(restclient.DefaultQPS)},
-		{"unlimited", -1, 0, 1000, false, podRetryBaseDelay},
-	} {
-		for queue, l := range podQueues(t, tc.qps, tc.burst) {
-			for i := range tc.undelayed {
-				if d := l.When(i); d > podRetryBaseDelay {
-					t.Fatalf("%s: %s queue delayed pod %d by %v inside the client's burst", tc.name, queue, i, d)
+	synctest.Test(t, func(t *testing.T) {
+		for _, tc := range []struct {
+			name      string
+			qps       float64
+			burst     int
+			undelayed int
+			pastBurst time.Duration
+		}{
+			{"configured", 100, 400, 400, 10 * time.Millisecond},
+			{"client-go defaults", 0, 0, restclient.DefaultBurst, time.Second / time.Duration(restclient.DefaultQPS)},
+			{"unlimited", -1, 0, 1000, podRetryBaseDelay},
+		} {
+			for queue, l := range podQueues(t, tc.qps, tc.burst) {
+				for i := range tc.undelayed {
+					if d := l.When(i); d > podRetryBaseDelay {
+						t.Fatalf("%s: %s queue delayed pod %d by %v inside the client's burst", tc.name, queue, i, d)
+					}
+				}
+				if d := l.When(tc.undelayed); d != tc.pastBurst {
+					t.Fatalf("%s: %s queue delayed pod %d past the client's burst by %v, want %v", tc.name, queue, tc.undelayed, d, tc.pastBurst)
 				}
 			}
-			if d := l.When(tc.undelayed); d > tc.pastMax || tc.limited && d <= podRetryBaseDelay {
-				t.Fatalf("%s: %s queue delayed pod %d past the client's burst by %v, want at most %v", tc.name, queue, tc.undelayed, d, tc.pastMax)
-			}
 		}
-	}
+	})
 }
 
 func TestPodQueuesBackOffAFailingPod(t *testing.T) {
@@ -49,6 +54,25 @@ func TestPodQueuesBackOffAFailingPod(t *testing.T) {
 				t.Fatalf("qps %v: %s queue retried a failing pod after %v, want %v", qps, queue, d, 2*podRetryBaseDelay)
 			}
 		}
+	}
+}
+
+func TestWarningEventsDropNormalEvents(t *testing.T) {
+	sink := record.NewFakeRecorder(8)
+	w := warningEvents{sink}
+	pod := &corev1.Pod{Name: "p"}
+	for _, eventtype := range []string{corev1.EventTypeNormal, corev1.EventTypeWarning} {
+		w.Event(pod, eventtype, "R", "m")
+		w.Eventf(pod, eventtype, "R", "m %d", 1)
+		w.AnnotatedEventf(pod, nil, eventtype, "R", "m %d", 2)
+	}
+	close(sink.Events)
+	var got []string
+	for e := range sink.Events {
+		got = append(got, e)
+	}
+	if want := []string{"Warning R m", "Warning R m 1", "Warning R m 2"}; !slices.Equal(got, want) {
+		t.Fatalf("recorded %q, want only the warnings %q", got, want)
 	}
 }
 

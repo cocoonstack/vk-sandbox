@@ -82,7 +82,6 @@ func destroyAuthorized(ctx context.Context, dyn dynamic.Interface, namespace str
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " expired: the operator tore its workload down"
 	}
 	if ref.UID != "" && obj.GetUID() != ref.UID {
-		// A same-name owner under a new UID means the referenced generation is gone.
 		return authRelease, "owner " + ref.Kind + " " + ref.Name + " UID rotated: referenced generation gone"
 	}
 	return authPreserve, "owner " + ref.Kind + " " + ref.Name + " alive: pod deletion is not VM authority"

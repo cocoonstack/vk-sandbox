@@ -26,7 +26,8 @@ pinned by intent tests:
    structured NotFound naming it in `Details.Name`), replaced by another UID,
    **in teardown** (deletionTimestamp set), or **expired** (Ready reason
    `SandboxExpired`). Otherwise the claim is preserved, and a
-   same-name replacement pod **adopts it in place** — no second claim, same VM.
+   same-name replacement pod of the same owner **adopts it in place** — no
+   second claim, same VM.
    A preserved claim's owner is re-checked with backoff, so a namespace
    deletion that removes Pod and owner independently still releases the VM. See
    [delete authorization](#delete-authorization-pod-deletion-is-not-vm-authority).
@@ -64,17 +65,20 @@ CreatePod
         |
         +-- a claim already exists for <namespace>/<name>
         |        -> adopt in place: rebind the pod UID, no new VM
+        |           (only the same Pod or a Pod of the claim's owner adopts;
+        |           a claim held for another owner is queued for release instead)
         |
         +-- otherwise: POST /v1/claim {template, net, size, ttl_seconds, claim_ref}
                  |
                  +-- error (incl. sandboxd 429 / redirect = no warm capacity)
                  |        -> CreatePod fails, the Pod stays Pending;
                  |           virtual-kubelet retries the create with backoff
+                 |           (restartPolicy Never: the Pod goes Failed instead)
                  |
                  +-- ClaimResult {id, token, owner_addr}
                           |
                           v
-                 claims[key] = {ID, Token, Address, PodUID, ClaimedAt, Deadline}
+                 claims[key] = {ID, Token, Address, PodUID, Authority, ClaimedAt, Deadline}
                  persist the table, then notify the kubelet:
                    phase Running, PodIP/HostIP = host of owner_addr,
                    one synthetic ready container per spec container
@@ -112,9 +116,9 @@ through the dynamic client before deciding; a bare Pod is its own authority:
 | Any query error, or no dynamic client configured | preserve |
 
 Preserve drops only the Pod entry; the claim -- and with it the release token
--- stays in the table so a same-name replacement Pod adopts the same VM. The
-stale-UID guard runs first: a request carrying a previous Pod generation's UID
-is ignored outright.
+-- stays in the table so a same-name replacement Pod of the same owner adopts
+the same VM. The stale-UID guard runs first: a request carrying a previous Pod
+generation's UID is ignored outright.
 
 Preserve also records the controller owner with the claim. Deleting a namespace
 deletes its Pods and their owning `Sandbox` objects independently, so about half
@@ -129,7 +133,20 @@ A claim the re-check releases is first withdrawn from its key into a persisted
 release queue, so a replacement Pod arriving meanwhile claims fresh instead of
 adopting a sandbox on its way out; a release that fails stays queued with its
 credential and is retried every tick, across restarts, until sandboxd confirms
-it gone. The recorded owner survives a restart with the claim.
+it gone. The recorded owner survives a restart with the claim. A same-name Pod
+whose controller owner is not the recorded one, such as the Pod of a Sandbox
+deleted and recreated under the same name, never adopts the claim: it claims
+fresh, and the old claim goes to the release queue.
+
+A Pod that leaves the apiserver while the provider is down, such as one
+force-deleted during an outage, never reaches `DeletePod`, so no owner is
+recorded for its claim. Every claim therefore also records its **authority**
+when it is taken or adopted: the Pod's controller owner UID, or the Pod's own
+UID for a bare Pod. A same-name Pod, after a restart or otherwise, adopts only
+if it is the Pod that holds the claim or has the same authority; the
+preserve-time owner, when recorded, takes the authority's place. Any other Pod
+claims fresh and the old claim goes to the release queue. A claim from a table
+written before the field existed has no authority and is adopted as before.
 
 The owner GVR is derived from `apiVersion` + `kind` with the English plural
 rules (`Sandbox` -> `sandboxes`, `policy` -> `policies`), never a naive
@@ -142,7 +159,7 @@ retries with the credential intact.
 
 ## Claims table persistence
 
-The claims table (`{id, token, address, podUID, claimedAt, deadline, owner}` per
+The claims table (`{id, token, address, podUID, authority, claimedAt, deadline, owner}` per
 pod key, plus the `releasing` list of withdrawn claims awaiting release) is written to `--state-path` as JSON with a tmp-file + rename, mode
 `0600`, directory mode `0700`. It is reloaded at startup, so a provider
 restart keeps the authority to tear down exactly what it delivered. The
@@ -265,10 +282,10 @@ node-local daemon holding the warm microVM pools this provider claims from.
 virtual-kubelet for full cocoon MicroVM Pods. The two providers co-exist on
 one physical node as **two distinct virtual nodes**: different node names,
 different kubelet listen ports (vk-cocoon `:10250`, vk-sandbox `:10260`), and
-different routing labels (`node.kubernetes.io/instance-type=virtual-node` for
-vk-cocoon, `sandbox.cocoonstack.io/runtime=sandboxd` here). Both carry the
-`virtual-kubelet.io/provider` taint, which the operator's shared `Exists`
-toleration covers. vk-sandbox can reuse the co-located vk-cocoon kubelet
-certificate when it is readable, and self-signs otherwise, so its API surface
+different routing labels (`cocoonstack.io/pool=<pool>` for vk-cocoon,
+`sandbox.cocoonstack.io/runtime=sandboxd` here). Both carry the
+`virtual-kubelet.io/provider` taint, which one `Exists` toleration in the Pod
+template covers. vk-sandbox can reuse the co-located vk-cocoon kubelet
+certificate when its files exist, and self-signs otherwise, so its API surface
 is uniform either way. The delete-authorization and audit-only-GC contracts
 implemented here are carried over from vk-cocoon.

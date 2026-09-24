@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// ownerRecheckMaxDelay caps the backoff between owner reads for one preserved claim.
 const ownerRecheckMaxDelay = 10 * time.Minute
 
 type ownerRecheck struct {
@@ -73,7 +72,6 @@ func (p *Provider) withdrawForRelease(key string, c Claim) bool {
 		return false
 	}
 	delete(p.claims, key)
-	delete(p.quarantined, key)
 	p.releasing = append(p.releasing, c)
 	return true
 }

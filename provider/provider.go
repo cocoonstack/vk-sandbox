@@ -16,12 +16,12 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
 
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 )
 
-// undoReleaseTimeout bounds a compensating release whose caller context may already be canceled.
 const undoReleaseTimeout = 10 * time.Second
 
 // SandboxdClient is the sandboxd surface the claim path drives; *sandboxd.Client satisfies it and Lister.
@@ -37,13 +37,14 @@ type Lister interface {
 
 // Claim binds one pod key to one sandboxd claim; Token is the release credential and never leaves the node.
 type Claim struct {
-	ID      string `json:"id"`
-	Token   string `json:"token"`
-	Address string `json:"address,omitempty"`
-	PodUID  string `json:"podUID"` // forensics only; the stale-UID guard reads the pod table
+	ID        string     `json:"id"`
+	Token     string     `json:"token"`
+	Address   string     `json:"address,omitempty"`
+	PodUID    string     `json:"podUID"`
+	Authority *types.UID `json:"authority,omitempty"`
 	// ClaimedAt is reported as the Pod start time, so it must not move between reads.
 	ClaimedAt metav1.Time `json:"claimedAt,omitzero"`
-	// Deadline is the lease end sandboxd returned; zero means unknown (an older table).
+	// Deadline is the lease end sandboxd returned; zero means none known (an older table, or a keep-forever archive).
 	Deadline metav1.Time `json:"deadline,omitzero"`
 	// Owner is recorded when a delete preserves the claim; the owner re-check releases once it is gone.
 	Owner *metav1.OwnerReference `json:"owner,omitempty"`
@@ -51,6 +52,14 @@ type Claim struct {
 
 func (c Claim) expired(now time.Time) bool {
 	return !c.Deadline.IsZero() && !now.Before(c.Deadline.Time)
+}
+
+func (c Claim) adoptableBy(pod *corev1.Pod) bool {
+	want := c.Authority
+	if c.Owner != nil {
+		want = &c.Owner.UID
+	}
+	return want == nil || c.PodUID == string(pod.UID) || *want == authorityOf(pod)
 }
 
 // Config assembles a Provider.
@@ -193,9 +202,6 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 			}
 			delete(p.quarantined, key)
 			continue
-		}
-		if _, pending := p.tentative[key]; pending {
-			continue // mid-create, not yet reported by sandboxd
 		}
 		delete(p.claims, key)
 		delete(p.quarantined, key)
@@ -383,3 +389,10 @@ func liveDeadlines(listed []sandboxd.SandboxSummary) map[string]time.Time {
 }
 
 func podKey(namespace, name string) string { return namespace + "/" + name }
+
+func authorityOf(pod *corev1.Pod) types.UID {
+	if ref := metav1.GetControllerOfNoCopy(pod); ref != nil {
+		return ref.UID
+	}
+	return pod.UID
+}

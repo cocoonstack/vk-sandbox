@@ -128,7 +128,9 @@ The binary prefers in-cluster configuration, so the same image can run as a
 DaemonSet on the sandboxd nodes with `serviceAccountName: vk-sandbox`,
 `hostNetwork: true` (so `SANDBOXD_URL` can stay on loopback), the sandboxd
 token mounted from a Secret, and `VK_STATE_PATH` on a `hostPath` volume so the
-release credentials survive a Pod restart. Derive a distinct virtual node
+release credentials survive a Pod restart. The image runs as UID 65532
+(distroless `nonroot`), so that directory must be writable by that user, or the
+binary refuses to start. Derive a distinct virtual node
 name from the physical node; assigning `spec.nodeName` directly would make
 virtual-kubelet update the real node. Use these container environment entries
 in this order so Kubernetes expands the physical name before adding the suffix:

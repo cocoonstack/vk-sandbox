@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func BenchmarkCommitClaim(b *testing.B) {
@@ -24,6 +25,7 @@ func BenchmarkCommitClaim(b *testing.B) {
 			Token:     "0123456789abcdef0123456789abcdef",
 			Address:   "10.0.0.1:7777",
 			PodUID:    "b2f0c5c4-9d1e-4a67-9f4e-000000000000",
+			Authority: new(types.UID("7c1e9a52-3b4d-4f60-8a21-000000000000")),
 			ClaimedAt: metav1.Now(),
 			Deadline:  metav1.Now(),
 		}
