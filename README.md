@@ -66,7 +66,8 @@ interactive access goes through the sandbox SDK and preview URLs.
   this provider serves
 - [sandbox-operator](https://github.com/cocoonstack/sandbox-operator) — the
   L3 aggregated apiserver that reads this provider's `NodeInventory`, and the
-  `pkg/sandboxd` client and `pkg/scale` keys this repo imports
+  `pkg/sandboxd` client, `pkg/scale` keys and `pkg/logbridge` log sink this
+  repo imports
 - [sandbox](https://github.com/cocoonstack/sandbox) — sandboxd, the node-local
   hot pool this provider claims from, plus silkd and the SDKs
 - [vk-cocoon](https://github.com/cocoonstack/vk-cocoon) — the sibling provider

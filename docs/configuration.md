@@ -28,6 +28,7 @@ environment.
 | `--publish-interval` | -- | `30s` | `NodeInventory` publish cadence |
 | `--node-labels` | -- | `sandbox.cocoonstack.io/runtime=sandboxd` | Comma-separated extra node labels, `key=value` |
 | `--disable-pod-events` | -- | `false` | Drop the pod controller's Normal events (one per pod create, update and delete); warnings still reach the apiserver |
+| -- | `VK_LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn` or `error`; an unknown level stops startup |
 | `--version` | -- | `false` | Print the build version and exit |
 
 `KUBECONFIG` is read only when in-cluster configuration is unavailable: the

@@ -19,7 +19,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-logr/logr"
+	"github.com/projecteru2/core/log"
+	"github.com/projecteru2/core/types"
 	"github.com/virtual-kubelet/virtual-kubelet/node"
 	"github.com/virtual-kubelet/virtual-kubelet/node/nodeutil"
 	"golang.org/x/time/rate"
@@ -33,9 +34,11 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
-	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
+	crlog "sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/cocoonstack/sandbox-operator/pkg/logbridge"
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
 	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 	"github.com/cocoonstack/vk-sandbox/inventory"
@@ -95,12 +98,18 @@ func main() {
 		return
 	}
 
-	o.log = ctrlzap.New(ctrlzap.UseDevMode(false)).WithName("vk-sandbox")
-	if err := o.run(); err != nil {
-		o.log.Error(err, "vk-sandbox exited")
+	ctx := context.Background()
+	if err := log.SetupLog(ctx, &types.ServerLogConfig{Level: envOr("VK_LOG_LEVEL", "info")}, ""); err != nil {
+		fmt.Fprintf(os.Stderr, "setup log: %v\n", err)
 		os.Exit(1)
 	}
-	o.log.Info("vk-sandbox exiting")
+	crlog.SetLogger(logbridge.New(ctx))
+	klog.SetLogger(logbridge.New(ctx).WithName("klog"))
+	logger := log.WithFunc("main")
+	if err := o.run(ctx); err != nil {
+		logger.Fatalf(ctx, err, "vk-sandbox exited")
+	}
+	logger.Info(ctx, "vk-sandbox exiting")
 }
 
 type options struct {
@@ -124,16 +133,15 @@ type options struct {
 	disablePodEvents bool
 	kubeQPS          float64
 	kubeBurst        int
-
-	log logr.Logger
 }
 
-func (o *options) run() error {
+func (o *options) run(ctx context.Context) error {
+	logger := log.WithFunc("main.run")
 	if o.statePath == "" {
 		return fmt.Errorf("--state-path is required: without it no release credential survives a restart")
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
 	cfg, err := kubeConfig()
@@ -172,13 +180,12 @@ func (o *options) run() error {
 		Lister:    sdClient,
 		Dynamic:   dyn,
 		StatePath: o.statePath,
-		Logger:    o.log.WithName("provider"),
 	})
 	if err != nil {
 		return fmt.Errorf("build provider: %w", err)
 	}
 
-	opts, err := o.nodeOptions(clientset)
+	opts, err := o.nodeOptions(ctx, clientset)
 	if err != nil {
 		return err
 	}
@@ -199,7 +206,7 @@ func (o *options) run() error {
 		}
 	}
 
-	o.log.Info("starting virtual node", "node", o.nodeName, "sandboxd", o.sandboxdURL)
+	logger.Infof(ctx, "starting virtual node node=%s sandboxd=%s", o.nodeName, o.sandboxdURL)
 	if err := n.Run(ctx); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("virtual-kubelet node exited: %w", err)
 	}
@@ -244,7 +251,8 @@ func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc
 	}
 }
 
-func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOpt, error) {
+func (o *options) nodeOptions(ctx context.Context, clientset kubernetes.Interface) ([]nodeutil.NodeOpt, error) {
+	logger := log.WithFunc("main.nodeOptions")
 	if _, err := listenPort(o.listenAddr); err != nil {
 		return nil, fmt.Errorf("parse --listen-addr: %w", err)
 	}
@@ -271,7 +279,7 @@ func (o *options) nodeOptions(clientset kubernetes.Interface) ([]nodeutil.NodeOp
 			return nil, fmt.Errorf("load kubelet TLS cert: %w", err)
 		}
 	} else {
-		o.log.Info("kubelet cert absent; self-signing", "node", o.nodeName)
+		logger.Infof(ctx, "kubelet cert absent; self-signing node=%s", o.nodeName)
 		if cert, err = selfSignedCert(o.nodeName, o.nodeIP, "127.0.0.1"); err != nil {
 			return nil, fmt.Errorf("self-sign kubelet cert: %w", err)
 		}
@@ -320,8 +328,7 @@ func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config,
 		inventory.NewLiveSource(p, sd),
 		inventory.NewNodeInfoSource(cmp.Or(o.sandboxdAddr, hostPort(o.sandboxdURL)), sd),
 		nodes,
-		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"),
-		o.log.WithName("inventory"))
+		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"))
 	go pub.PublishPeriodically(ctx, o.publishInterval)
 	return nil
 }

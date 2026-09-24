@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-logr/logr"
+	"github.com/projecteru2/core/log"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -70,7 +70,6 @@ type Config struct {
 	Dynamic dynamic.Interface
 	// StatePath persists the claims table at 0600; empty disables persistence (tests).
 	StatePath string
-	Logger    logr.Logger
 }
 
 type stateFile struct {
@@ -86,7 +85,6 @@ type Provider struct {
 	lister    Lister
 	dyn       dynamic.Interface
 	statePath string
-	log       logr.Logger
 
 	mu       sync.RWMutex
 	pods     map[string]*corev1.Pod // key -> last accepted pod object
@@ -119,7 +117,6 @@ func New(ctx context.Context, cfg Config) (*Provider, error) {
 		lister:      cfg.Lister,
 		dyn:         cfg.Dynamic,
 		statePath:   cfg.StatePath,
-		log:         cfg.Logger,
 		pods:        map[string]*corev1.Pod{},
 		claims:      map[string]Claim{},
 		tentative:   map[string]struct{}{},
@@ -164,6 +161,7 @@ func (p *Provider) ClaimAddresses() map[string]string {
 // the node holds leave quarantine, rows it does not are dropped. A failed
 // listing is not an empty list, so it drops nothing and reports false.
 func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
+	logger := log.WithFunc("provider.VerifyClaimsAgainstNode")
 	if p.lister == nil {
 		return false
 	}
@@ -182,7 +180,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 
 	listed, err := p.lister.Sandboxes(ctx)
 	if err != nil {
-		p.log.Info("sandboxd list failed; claims stay unverified", "err", err.Error())
+		logger.Warnf(ctx, "sandboxd list failed; claims stay unverified err=%v", err)
 		return false
 	}
 	live := liveDeadlines(listed)
@@ -205,7 +203,7 @@ func (p *Provider) VerifyClaimsAgainstNode(ctx context.Context) bool {
 		}
 		delete(p.claims, key)
 		delete(p.quarantined, key)
-		p.log.Info("dropping a claim whose sandbox the node no longer holds", "pod", key, "claim", id)
+		logger.Infof(ctx, "dropping a claim whose sandbox the node no longer holds pod=%s claim=%s", key, id)
 	}
 	return true
 }
@@ -322,9 +320,9 @@ func (p *Provider) quarantineLoadedClaims() {
 }
 
 // saveState logs a failed persist: its callers have already changed what the node holds.
-func (p *Provider) saveState() {
+func (p *Provider) saveState(ctx context.Context) {
 	if err := p.persist(); err != nil {
-		p.log.Error(err, "persist claims state")
+		log.WithFunc("provider.saveState").Error(ctx, err, "persist claims state")
 	}
 }
 

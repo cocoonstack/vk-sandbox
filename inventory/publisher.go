@@ -10,7 +10,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/go-logr/logr"
+	"github.com/projecteru2/core/log"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -67,14 +67,13 @@ type Publisher struct {
 	info    NodeInfoSource
 	nodes   NodeGetter
 	applier scale.InventoryApplier
-	log     logr.Logger
 
 	nodeSeen bool
 }
 
 // NewPublisher builds a Publisher for node.
-func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, nodes NodeGetter, applier scale.InventoryApplier, log logr.Logger) *Publisher {
-	return &Publisher{node: node, live: live, info: info, nodes: nodes, applier: applier, log: log}
+func NewPublisher(node string, live scale.NodeLiveSource, info NodeInfoSource, nodes NodeGetter, applier scale.InventoryApplier) *Publisher {
+	return &Publisher{node: node, live: live, info: info, nodes: nodes, applier: applier}
 }
 
 // Publish server-side-applies this node's live sandboxes as a NodeInventory object, returning the summarized entry count.
@@ -109,13 +108,14 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 
 // PublishPeriodically runs Publish on interval until ctx is canceled; failures are logged and retried next tick.
 func (p *Publisher) PublishPeriodically(ctx context.Context, interval time.Duration) {
+	logger := log.WithFunc("inventory.PublishPeriodically")
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		if n, err := p.Publish(ctx); err != nil {
-			p.log.Error(err, "node inventory publish failed; will retry on next tick", "node", p.node)
+			logger.Errorf(ctx, err, "node inventory publish failed; will retry on next tick node=%s", p.node)
 		} else {
-			p.log.V(1).Info("published node inventory", "node", p.node, "entries", n)
+			logger.Debugf(ctx, "published node inventory node=%s entries=%d", p.node, n)
 		}
 		select {
 		case <-ctx.Done():

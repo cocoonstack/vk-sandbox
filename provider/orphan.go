@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"time"
+
+	"github.com/projecteru2/core/log"
 )
 
 const (
@@ -15,12 +17,13 @@ const (
 // only reports: background reconciliation cannot prove intent, and a failed
 // listing is not an empty list. Returns orphans, stale claim keys, and ok.
 func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaims []string, ok bool) {
+	logger := log.WithFunc("provider.OrphanScan")
 	if p.lister == nil {
 		return nil, nil, false
 	}
 	listed, err := p.lister.Sandboxes(ctx)
 	if err != nil {
-		p.log.Info("sandboxd list failed; skipping orphan scan this cycle (failed query is not an empty list)", "err", err.Error())
+		logger.Warnf(ctx, "sandboxd list failed; skipping orphan scan this cycle (failed query is not an empty list) err=%v", err)
 		return nil, nil, false
 	}
 
@@ -46,22 +49,22 @@ func (p *Provider) OrphanScan(ctx context.Context) (orphans []string, staleClaim
 			continue
 		}
 		if s.ClaimRef != "" {
-			p.recordVerdict(verdicts, s.ID, verdictExternal,
-				"sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate",
-				"sandbox", s.ID, "claimRef", s.ClaimRef)
+			if p.recordVerdict(verdicts, s.ID, verdictExternal) {
+				logger.Infof(ctx, "sandbox claimed outside this provider (claim_ref set, no local pod); not an orphan candidate sandbox=%s claimRef=%s", s.ID, s.ClaimRef)
+			}
 			continue
 		}
 		orphans = append(orphans, s.ID)
-		p.recordVerdict(verdicts, s.ID, verdictOrphan,
-			"possible orphan sandbox: live on node but bound to no pod; audit-only, retaining",
-			"sandbox", s.ID)
+		if p.recordVerdict(verdicts, s.ID, verdictOrphan) {
+			logger.Infof(ctx, "possible orphan sandbox: live on node but bound to no pod; audit-only, retaining sandbox=%s", s.ID)
+		}
 	}
 	for id, key := range claimed {
 		if _, ok := live[id]; !ok {
 			staleClaims = append(staleClaims, key)
-			p.recordVerdict(verdicts, id, verdictStale,
-				"claim references a sandbox no longer on the node (TTL reap or external release)",
-				"pod", key, "sandbox", id)
+			if p.recordVerdict(verdicts, id, verdictStale) {
+				logger.Infof(ctx, "claim references a sandbox no longer on the node (TTL reap or external release) pod=%s sandbox=%s", key, id)
+			}
 		}
 	}
 	p.orphanVerdicts = verdicts
@@ -92,15 +95,14 @@ func (p *Provider) RunLeaseWatch(ctx context.Context, interval time.Duration) {
 	})
 }
 
-// recordVerdict logs a verdict only when it changed since the previous scan (#3).
-func (p *Provider) recordVerdict(verdicts map[string]string, id, verdict, msg string, kv ...any) {
+// recordVerdict reports whether the verdict changed since the previous scan, so each change logs once (#3).
+func (p *Provider) recordVerdict(verdicts map[string]string, id, verdict string) bool {
 	verdicts[id] = verdict
-	if p.orphanVerdicts[id] != verdict {
-		p.log.Info(msg, kv...)
-	}
+	return p.orphanVerdicts[id] != verdict
 }
 
 func (p *Provider) publishExpiredLeases(ctx context.Context) {
+	logger := log.WithFunc("provider.publishExpiredLeases")
 	now := time.Now()
 	candidates := map[string]Claim{}
 	p.mu.RLock()
@@ -121,7 +123,7 @@ func (p *Provider) publishExpiredLeases(ctx context.Context) {
 	if p.lister != nil {
 		listed, err := p.lister.Sandboxes(ctx)
 		if err != nil {
-			p.log.Info("sandboxd list failed; deferring lease-expiry publication", "err", err.Error())
+			logger.Warnf(ctx, "sandboxd list failed; deferring lease-expiry publication err=%v", err)
 			return
 		}
 		live = liveDeadlines(listed)
