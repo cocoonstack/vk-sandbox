@@ -99,7 +99,7 @@ func main() {
 	}
 
 	ctx := context.Background()
-	if err := log.SetupLog(ctx, &types.ServerLogConfig{Level: envOr("VK_LOG_LEVEL", "info")}, ""); err != nil {
+	if err := log.SetupLog(ctx, &types.ServerLogConfig{Level: envOr("VK_LOG_LEVEL", "info"), UseJSON: !stderrIsTerminal()}, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "setup log: %v\n", err)
 		os.Exit(1)
 	}
@@ -377,4 +377,9 @@ func listenPort(addr string) (int32, error) {
 		return 0, fmt.Errorf("port %d out of range", port)
 	}
 	return int32(port), nil
+}
+
+func stderrIsTerminal() bool {
+	fi, err := os.Stderr.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }
