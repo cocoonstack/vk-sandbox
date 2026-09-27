@@ -5,6 +5,7 @@ import (
 
 	extv1beta1 "github.com/cocoonstack/sandbox-operator/api/v1beta1"
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale"
 )
 
 // InfoClient reads this node's warm-pool state from sandboxd; *sandboxd.Client satisfies it.
@@ -38,15 +39,5 @@ func (s *sandboxdInfoSource) NodeInfo(ctx context.Context) (NodeInfo, error) {
 	if err != nil {
 		return NodeInfo{}, err
 	}
-	pools := make([]extv1beta1.PoolCapacity, 0, len(info.Pools))
-	for _, p := range info.Pools {
-		pools = append(pools, extv1beta1.PoolCapacity{
-			Template: p.Key.Template,
-			Net:      p.Key.Net,
-			Size:     p.Key.Size,
-			Warm:     p.Warm,
-			Target:   p.Target,
-		})
-	}
-	return NodeInfo{Address: s.address, Pools: pools}, nil
+	return NodeInfo{Address: s.address, Pools: scale.PoolCapacityFromInfo(info)}, nil
 }
