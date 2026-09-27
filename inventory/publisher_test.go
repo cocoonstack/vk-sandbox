@@ -81,6 +81,7 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 		Pools: []extv1beta1.PoolCapacity{
 			{Template: "base:24.04", Net: "none", Size: "small", Warm: 4, Target: 4},
 		},
+		Templates: []extv1beta1.PromotedTemplate{{Template: "tpl:a", Net: "none", Size: "small", ContentDigest: "sha256:aa"}},
 	}}
 	applier := &captureApplier{}
 	pub := NewPublisher("vk-sandboxd-26", live, info, registered("vk-sandboxd-26", "uid-26"), applier)
@@ -107,6 +108,9 @@ func TestPublisherStampsNodeInfo(t *testing.T) {
 	}
 	if len(got.Pools) != 1 || got.Pools[0].Template != "base:24.04" || got.Pools[0].Warm != 4 || got.Pools[0].Target != 4 {
 		t.Fatalf("pool capacity not published: %+v", got.Pools)
+	}
+	if len(got.Templates) != 1 || got.Templates[0].Template != "tpl:a" || got.Templates[0].ContentDigest != "sha256:aa" {
+		t.Fatalf("promoted templates not published: %+v", got.Templates)
 	}
 	if len(got.Entries) != 1 || got.Entries[0].Name != "ns1/pod-a" {
 		t.Fatalf("entries wrong: %+v", got.Entries)
