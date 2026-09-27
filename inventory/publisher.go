@@ -101,6 +101,7 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 	}
 	inv.Address = ni.Address
 	inv.Pools = ni.Pools
+	inv.Templates = ni.Templates
 	if err := p.applier.Apply(ctx, inv); err != nil {
 		return 0, fmt.Errorf("inventory: apply node %q inventory: %w", p.node, err)
 	}
