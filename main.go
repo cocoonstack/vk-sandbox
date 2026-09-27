@@ -40,7 +40,7 @@ import (
 
 	"github.com/cocoonstack/sandbox-operator/pkg/logbridge"
 	"github.com/cocoonstack/sandbox-operator/pkg/sandboxd"
-	"github.com/cocoonstack/sandbox-operator/pkg/scale"
+	"github.com/cocoonstack/sandbox-operator/pkg/scale/kubeinventory"
 	"github.com/cocoonstack/vk-sandbox/inventory"
 	"github.com/cocoonstack/vk-sandbox/provider"
 	"github.com/cocoonstack/vk-sandbox/version"
@@ -328,7 +328,7 @@ func (o *options) startInventoryPublisher(ctx context.Context, cfg *rest.Config,
 		inventory.NewLiveSource(p, sd),
 		inventory.NewNodeInfoSource(cmp.Or(o.sandboxdAddr, hostPort(o.sandboxdURL)), sd),
 		nodes,
-		scale.NewSSAInventoryApplier(cclient, "vk-sandbox"))
+		kubeinventory.NewSSAApplier(cclient, "vk-sandbox"))
 	go pub.PublishPeriodically(ctx, o.publishInterval)
 	return nil
 }
