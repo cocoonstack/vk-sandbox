@@ -191,6 +191,22 @@ func TestPublisherPublishesAtStartAndOnEveryTick(t *testing.T) {
 	})
 }
 
+func TestPublisherStampsEveryPublish(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		applier := &captureApplier{}
+		pub := NewPublisher("n1", staticLive{}, staticInfo{}, registered("n1", "uid-1"), applier)
+		for range 2 {
+			time.Sleep(30 * time.Second)
+			if _, err := pub.Publish(t.Context()); err != nil {
+				t.Fatalf("Publish: %v", err)
+			}
+			if got := applier.got.PublishedAt.Time; !got.Equal(time.Now()) {
+				t.Fatalf("publishedAt = %v, want the publish time %v", got, time.Now())
+			}
+		}
+	})
+}
+
 type staticClaims map[string]provider.Claim
 
 func (s staticClaims) ClaimAddresses() map[string]string {

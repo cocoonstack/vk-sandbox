@@ -93,6 +93,7 @@ func (p *Publisher) Publish(ctx context.Context) (int, error) {
 		Node:            p.node,
 		Entries:         entries,
 		OwnerReferences: owners,
+		PublishedAt:     metav1.Now(),
 	}
 	ni, err := p.info.NodeInfo(ctx)
 	if err != nil {

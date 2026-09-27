@@ -228,6 +228,14 @@ unowned, and the node returns when vk-sandbox restarts and registers again. A
 publish that cannot read the `Node` for any other reason is skipped until the
 next tick.
 
+Every apply stamps `publishedAt` with the publish time. The aggregated
+apiserver drops a node whose `publishedAt` trails the newest publish in the
+fleet by more than its `--inventory-stale-after` (90 s by default), so a node
+that dies, or whose vk-sandbox stops, leaves the claim path and the read view
+within that window, and comes back on its next publish. A vk-sandbox restart
+shorter than the window is invisible, and a control-plane outage, which stops
+every publish at once, drops no node.
+
 ```
 sandboxd GET /v1/sandboxes ---+
   (authoritative live set)    |
