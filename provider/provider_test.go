@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1134,7 +1135,7 @@ func TestTheClaimCarriesThePodAnnotationsAndKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := sandboxd.ClaimSpec{Template: "base:24.04", Net: "egress", Size: "large", TTLSeconds: 600, ClaimRef: "ns/p"}
-	if sd.lastSpec != want {
+	if !reflect.DeepEqual(sd.lastSpec, want) {
 		t.Errorf("ClaimSpec = %+v, want %+v", sd.lastSpec, want)
 	}
 }
