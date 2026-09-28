@@ -122,7 +122,7 @@ deadline, confirmed absence pushes `Failed` with reason `SandboxLeaseExpired`,
 and a failed listing defers the decision. This permits archive retention to
 change the lease without falsely reporting a live claim as gone.
 
-Ordinary claims are capped at 24 hours and have no automatic renewal; the e2b
-keepalive is record-keeping only. The provider pushes status because
+Ordinary claims are capped at 24 hours and have no automatic renewal; a
+client's keepalive is record-keeping only. The provider pushes status because
 virtual-kubelet never polls an asynchronous provider. The release credential
 remains available for authorized teardown.
