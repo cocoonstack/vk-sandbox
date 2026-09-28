@@ -159,7 +159,7 @@ func (o *options) run(ctx context.Context) error {
 		return fmt.Errorf("dynamic client: %w", err)
 	}
 
-	token, err := o.sandboxdToken()
+	token, err := sandboxd.TokenFrom("", o.tokenFile)
 	if err != nil {
 		return err
 	}
@@ -210,17 +210,6 @@ func (o *options) run(ctx context.Context) error {
 		return fmt.Errorf("virtual-kubelet node exited: %w", err)
 	}
 	return nil
-}
-
-func (o *options) sandboxdToken() (string, error) {
-	if o.tokenFile == "" {
-		return "", nil
-	}
-	b, err := os.ReadFile(o.tokenFile)
-	if err != nil {
-		return "", fmt.Errorf("read sandboxd token file: %w", err)
-	}
-	return strings.TrimSpace(string(b)), nil
 }
 
 func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc {

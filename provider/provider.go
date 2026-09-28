@@ -360,10 +360,7 @@ func (p *Provider) write(committing string) error {
 		}
 	}
 	p.mu.RUnlock()
-	b, err := json.Marshal(st)
-	if err != nil {
-		return fmt.Errorf("encode claims state: %w", err)
-	}
+	b, _ := json.Marshal(st)
 	// A deleted state directory must not turn every later save into a permanent failure.
 	if err := os.MkdirAll(filepath.Dir(p.statePath), 0o700); err != nil {
 		return fmt.Errorf("mkdir state dir: %w", err)
