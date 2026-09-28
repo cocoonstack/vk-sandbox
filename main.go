@@ -136,7 +136,6 @@ type options struct {
 }
 
 func (o *options) run(ctx context.Context) error {
-	logger := log.WithFunc("main.run")
 	if o.statePath == "" {
 		return fmt.Errorf("--state-path is required: without it no release credential survives a restart")
 	}
@@ -206,7 +205,7 @@ func (o *options) run(ctx context.Context) error {
 		}
 	}
 
-	logger.Infof(ctx, "starting virtual node node=%s sandboxd=%s", o.nodeName, o.sandboxdURL)
+	log.WithFunc("main.run").Infof(ctx, "starting virtual node node=%s sandboxd=%s", o.nodeName, o.sandboxdURL)
 	if err := n.Run(ctx); err != nil && ctx.Err() == nil {
 		return fmt.Errorf("virtual-kubelet node exited: %w", err)
 	}
@@ -252,7 +251,6 @@ func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc
 }
 
 func (o *options) nodeOptions(ctx context.Context, clientset kubernetes.Interface) ([]nodeutil.NodeOpt, error) {
-	logger := log.WithFunc("main.nodeOptions")
 	if _, err := listenPort(o.listenAddr); err != nil {
 		return nil, fmt.Errorf("parse --listen-addr: %w", err)
 	}
@@ -279,7 +277,7 @@ func (o *options) nodeOptions(ctx context.Context, clientset kubernetes.Interfac
 			return nil, fmt.Errorf("load kubelet TLS cert: %w", err)
 		}
 	} else {
-		logger.Infof(ctx, "kubelet cert absent; self-signing node=%s", o.nodeName)
+		log.WithFunc("main.nodeOptions").Infof(ctx, "kubelet cert absent; self-signing node=%s", o.nodeName)
 		if cert, err = selfSignedCert(o.nodeName, o.nodeIP, "127.0.0.1"); err != nil {
 			return nil, fmt.Errorf("self-sign kubelet cert: %w", err)
 		}
