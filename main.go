@@ -67,6 +67,11 @@ const (
 
 	// TaintKey marks the virtual node; a sandbox Pod template carries the matching toleration.
 	TaintKey = "virtual-kubelet.io/provider"
+
+	// Mark the virtual node as virtual-node on both current and beta instance-type keys so
+	// host-only VKE DaemonSets (such as csi-local-agent) exclude it via nodeAffinity.
+	legacyLabelInstanceType = "beta.kubernetes.io/instance-type"
+	virtualNodeInstanceType = "virtual-node"
 )
 
 func main() {
@@ -221,6 +226,11 @@ func (o *options) providerFactory(p *provider.Provider) nodeutil.NewProviderFunc
 	}
 	kubeletPort, _ := listenPort(o.listenAddr)
 	return func(cfg nodeutil.ProviderConfig) (nodeutil.Provider, node.NodeProvider, error) {
+		if cfg.Node.Labels == nil {
+			cfg.Node.Labels = map[string]string{}
+		}
+		cfg.Node.Labels[corev1.LabelInstanceTypeStable] = virtualNodeInstanceType
+		cfg.Node.Labels[legacyLabelInstanceType] = virtualNodeInstanceType
 		maps.Copy(cfg.Node.Labels, parseLabels(o.podLabels))
 		cfg.Node.Spec.Taints = append(cfg.Node.Spec.Taints, corev1.Taint{
 			Key:    TaintKey,

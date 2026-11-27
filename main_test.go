@@ -143,3 +143,28 @@ func podQueues(t *testing.T, qps float64, burst int) map[string]workqueue.TypedR
 	}
 	return queues
 }
+
+func TestProviderFactoryMarksVirtualNodeInstanceType(t *testing.T) {
+	o := &options{
+		nodeName:   "cocoon-bd27-sandboxd",
+		nodeIP:     "10.0.0.27",
+		listenAddr: "127.0.0.1:10260",
+		nodeCPU:    "4000",
+		nodeMem:    "8Ti",
+		nodePods:   "2000",
+		podLabels:  "sandbox.cocoonstack.io/runtime=sandboxd,custom=1",
+	}
+	n := &corev1.Node{}
+	n.Name = o.nodeName
+	if _, _, err := o.providerFactory(nil)(nodeutil.ProviderConfig{Node: n}); err != nil {
+		t.Fatalf("providerFactory: %v", err)
+	}
+	for _, key := range []string{corev1.LabelInstanceTypeStable, legacyLabelInstanceType} {
+		if got := n.Labels[key]; got != virtualNodeInstanceType {
+			t.Fatalf("label %s = %q, want %q", key, got, virtualNodeInstanceType)
+		}
+	}
+	if n.Labels["sandbox.cocoonstack.io/runtime"] != "sandboxd" || n.Labels["custom"] != "1" {
+		t.Fatalf("extra --node-labels missing: %v", n.Labels)
+	}
+}
